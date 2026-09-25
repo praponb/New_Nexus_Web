@@ -47,7 +47,9 @@ The script starts Docker Postgres and Redis if Docker is running, applies migrat
   ```bash
   pkill -f start_dev.sh; pkill -f 'daphne .*nexus_backend'; pkill -f 'celery -A engine.celery_app'
   ```
-- **Restart** = stop, then `./scripts/start_dev.sh` again.
+- **Restart** = stop, then `./scripts/start_dev.sh` again, from the repo root.
+- There is **no `stop_dev.sh`**. `start_dev.sh` is the only dev-stack script; it stops everything on Ctrl+C (see P26).
+- If `start_dev.sh` prints "Another Nexus stack looks alive", the old stack is still running. Run the `pkill` line above and start it again.
 
 > **Always restart after pulling or merging code changes.** The Celery worker loads the engine code once at start-up. A worker that's still running keeps generating with the **old** prompts and packaging.
 
@@ -60,6 +62,7 @@ ps -eo pid,lstart,command | grep -E "start_dev.sh|daphne .*nexus|celery -A engin
 docker ps --format '{{.Names}} {{.Status}}'                                      # nexus-postgres / nexus-redis healthy
 ```
 The `lstart` column shows when the worker started. Compare it with your last merge time to know whether it has the latest code.
+There is no `/api/health/` route, and `http://localhost:8000/` returns 404 on the Nexus backend. A **401** from `/api/v1/auth/me/` is the "backend is up" signal (see P27).
 
 ### First-time setup (a new machine)
 ```bash
@@ -165,6 +168,8 @@ Use this after changes to `start_servers.sh`, `README.md` or `.env.example` gene
 - `--include-old-test-accounts` also removes `smoke14225`, `celery-smoke`, `ws4045` and `ui-demo7896` (`@example.com`).
 - **`prapon@gmail.com` is never touched.**
 - A successful run starts with `DELETING: …` and ends with `done.`. If it says `DRY RUN`, `--yes` was missing.
+- **Verify afterwards** with a plain dry run: it should print `DRY RUN (add --yes to delete): 0 user(s)` and list no log dirs. Check the size with `du -sh media/workspaces`.
+- On 2026-09-25 this removed the 8 e2e users and the workspaces of live runs 1–5; `media/workspaces` went from 4.5 GB to 929 MB. The four older test accounts were not removed (they need `--include-old-test-accounts`).
 
 ### Database migrations
 ```bash
@@ -207,7 +212,8 @@ gh pr create --base main --head b_pbv_main --title "…" --body "…"
 gh pr merge <N> --merge
 git fetch origin && git branch -f main origin/main               # sync local main (main isn't checked out)
 ```
-- PRs #1–#6 were merged on 2026-09-25. The repo is private.
+- PRs #1–#9 were merged on 2026-09-25 (#9 added this guide's last updates). The repo is private.
+- A docs-only merge (for example, PRs #7 and #8) doesn't need a dev-stack restart. A merge that touches `backend/engine/` or the apps does (P9).
 - If `git fetch origin main:main` is rejected as non-fast-forward, local `main` has commits that GitHub doesn't. Look at them (`git log origin/main..main`) before resetting it.
 
 ---
@@ -320,6 +326,18 @@ Status: ✅ fixed · 🔧 workaround · ⚠️ open.
 - Claude reads `docs/PROGRESS.md` ("Resume here") and its memory notes
 - keep that file updated through PRs
 
+**P25 🔧 "I ran it" but nothing changed.**
+- Seen twice with the cleanup script: it was run without `--yes` (a dry run) or from another folder, so nothing was deleted. The same happened once with the restart (the worker's start time hadn't changed).
+- **Solution:** run commands from the repo root and read the last line of output (`done.` for the cleanup, "Nexus is up" for the stack). Ask Claude to verify: it checks the real state (the dry run's user count, the worker's start time, `git log origin/main`) before closing an item.
+
+**P26 🔧 Claude named a script that doesn't exist (`./scripts/stop_dev.sh`).**
+- **Cause:** Claude answered from memory instead of checking the `scripts/` folder.
+- **Solution:** the real stop is Ctrl+C or the `pkill` line in section 2. If a command says "no such file", `ls scripts/` and tell Claude; this guide lists only commands that were checked against the repo.
+
+**P27 🔧 A backend health check returns 404.**
+- `/api/health/` and `/` don't exist on the Nexus backend. Use `curl http://localhost:8000/api/v1/auth/me/` and expect **401**.
+- (Generated apps are different: their backend's `GET /` returns `{"status": "ok"}`.)
+
 ---
 
 ## 9. Live run history (2026-09-25)
@@ -333,9 +351,14 @@ Status: ✅ fixed · 🔧 workaround · ⚠️ open.
 | 5 | `9a159a77` | ✅ PASS (loop 1, 24 min) | All fixes merged; notes written to `.agents/` with 0 denials; clean zip |
 | 6 | `8c50ba26` "Asset Inventory" (55 files) | ❌ → ✅ | Failed at loop 3/3 after 1h45m (F1, P5/P6). **Continue repair** completed it in 22 min, then repackaged (P18) |
 
+Runs 1–5 belonged to throwaway `e2e-…` users, so the cleanup deleted their projects and workspaces; `--verify-only` no longer works for them. Only run 6 (owned by `prapon@gmail.com`) remains.
+
 ---
 
 ## 10. Open items / limitations
 
+Status at the end of 2026-09-25: all work is merged into `main` (PRs #1–#9), the dev stack was restarted at 18:39 on the latest engine code, and the test data is cleaned up. Nothing is waiting on you.
+
 - ⚠️ **QA sandbox:** the QA agent's `run_command` is limited only by its prompt, with no OS sandbox on macOS. That's fine on your own machine, but must be solved before offering Nexus to other users.
 - ⚠️ **Not yet seen live:** the stall fail-over (P4) and the design consistency review (P6). Watch the next generation for a `## Consistency review` section in `.agents/dds_output.md` and any "Design check" message.
+- Optional: remove the four older test accounts with `.venv/bin/python scripts/cleanup_test_data.py --yes --include-old-test-accounts`.
