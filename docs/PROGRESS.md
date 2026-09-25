@@ -1,7 +1,7 @@
 # Nexus: Implementation Progress & Handoff
 
 > **Resuming in a new session?** Read this file first, then `docs/IMPLEMENTATION_PLAN.md` (the approved plan) and `NEXUS_DESIGN_DOCUMENT.md` (the spec).
-> Last updated: 2026-09-25 (session 2). All 7 phases are done. Live acceptance passed on runs 1, 3 and 5; run 5 used the merged fixes. See **Resume here**.
+> Last updated: 2026-09-25 (session 2, evening). All 7 phases are done. Live acceptance passed on runs 1, 3 and 5. Run 6 failed at QA loop 3 and was then completed live through "Continue repair". Everything is merged into `main` (PRs #1–#4). See **Resume here**.
 
 ## Decisions made by the user (do not re-ask)
 | Topic | Decision |
@@ -196,7 +196,7 @@
   - The request is refused (409 `resume_unavailable`) unless the project is FAILED, the DDS, manifest and QA report exist, and the requirement is unchanged. `engine.context.resume_problem` enforces this in both the view and the orchestrator.
   - `ProjectDetail.can_resume` drives a "Continue repair" button in Mission Control, next to "Start over".
   - `started_at` is now also set on TESTING.
-  - **61/61 pass.** `nuxi typecheck` is clean. Not yet exercised live; run 6 is the candidate.
+  - **61/61 pass.** `nuxi typecheck` is clean. **Verified live on run 6** (see "Run 6 resumed" below).
 - **Fix 7: the WebSocket history is sent in batches.** Run 6 has 2065 logs, so its one `history` message was 1.56 MB, over the 1 MiB Daphne/autobahn frame limit (`PayloadExceededError`). Mission Control then looped on "Connection lost. Reconnecting…".
   - `apps/realtime/consumers.py` now sends the history as several `history` messages of about 256 KB each (`history_batches`). The client already appends them.
   - **62/62 pass.**
@@ -210,15 +210,23 @@
   - Verified live on a copy of the Asset Inventory app (8001/3002 picked, CORS header correct, watchdog cleanup). **63/63 pass.** Apps packaged before this fix still have the old script.
 - **Fix 9: repackaging.** `manage.py repackage <project_id>... | --all` rebuilds a completed project's zip and artifact row with the current delivery files, without rerunning agents (`orchestrator.repackage` / `build_package`). `write_support_files` now also refreshes `.env.example` and `README.md` when Nexus wrote them (matched by marker lines); files the agents wrote are left alone.
   - Run 6 was repackaged: its zip is now sha256 `58fcf4e6…`, and it includes the new `start_servers.sh`. **64/64 pass.**
+- **Run 6 resumed ("Continue repair", live): COMPLETED.**
+  - Task `e730e76d` (`resume=True`) resumed run 6 from its loop-3 QA report. It ran one repair cycle (fixing F1, the DDS `active → in_stock` contradiction), and the fresh QA loop **passed on loop 1**.
+  - Timing: 09:55 → 10:17 UTC (about 22 min), 376 logs. Compare the original run: 2,065 logs over about 1h45m.
+  - Then repackaged (fix 9): zip sha256 `58fcf4e6a064…`, 60 files, 212,937 bytes. The copy the user downloaded to `~/Downloads/nexus_project_asset-inventory.zip` has the identical sha256 and runs with the adaptive-ports `start_servers.sh`.
 - **Git:** local `main` was reset to `origin/main` (dropping the stale handoff commit `b3a3ee0`). `b_pbv_main` is **kept** at the user's request.
+  - Merged into `main`: PR #1 (`0501e32`), PR #2 (`78913cd`), PR #3 (`3456bc7`) and PR #4 (`d39da24`, fixes 6–9).
+- **Dev stack:** restarted by the user at 17:58 (after fixes 8–9). It was verified as a single `start_dev.sh`, Daphne :8000, one Celery worker ("ready") and Nuxt :3000.
+- **Login/register:** the user registered (`prapon@gmail.com`) and logged in through the browser UI themselves. My browser rules forbid me typing passwords.
 - **Open items:**
-  - Local `main` has an unpushed, stale handoff commit `b3a3ee0`, so it diverges from `origin/main`. Ask the user before resetting it.
-  - Browser: the login/register form submits were never tested. My browser rules forbid me typing passwords, so the user tests these.
-  - QA `run_command` is prompt-constrained only.
+  - The live fail-over after a stalled or reset model stream (fixes 4–5) is covered only by unit tests; a real stall can't be triggered on demand.
+  - QA `run_command` is prompt-constrained only; there is no OS sandbox on macOS.
+  - Idea: add a consistency check of the Team Lead's DDS, e.g. state-transition tables vs. endpoint specs. Run 6's last bug (F1) was a self-contradiction in the DDS that surfaced only in QA loop 3.
+  - Housekeeping: old acceptance-run workspaces in `media/workspaces/` and `e2e-*@example.com` test users.
 
 ## Possible follow-ups
 - QA `run_command` is prompt-constrained only; there is no OS sandbox on macOS.
-- Git: commits `eefcfec` and `3f5a9ed` are on `main` and `b_pbv_main` (pushed to the private origin). Fix commits `739e126` and `b1d2a92` are pushed on `b_pbv_main`; PR #1 (https://github.com/praponb/New_Nexus_Web/pull/1) merges them into `main`.
+- Git: all work is merged into `main` on the private origin through PRs #1–#4 (https://github.com/praponb/New_Nexus_Web/pulls?q=is%3Apr). `b_pbv_main` is kept as the working branch.
 
 ## Where everything is
 - Approved plan: `docs/IMPLEMENTATION_PLAN.md` (a copy of `~/.claude/plans/pasted-content-id-cf92-please-read-rosy-pixel.md`).
