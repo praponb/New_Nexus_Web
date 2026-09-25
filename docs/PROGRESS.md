@@ -1,7 +1,7 @@
 # Nexus: Implementation Progress & Handoff
 
 > **Resuming in a new session?** Read this file first, then `docs/IMPLEMENTATION_PLAN.md` (the approved plan) and `NEXUS_DESIGN_DOCUMENT.md` (the spec).
-> Last updated: 2026-09-25 (session 2). All 7 phases are done and live acceptance passed once. See **Resume here** for the failed second live run and its fix.
+> Last updated: 2026-09-25 (session 2). All 7 phases are done. Live acceptance passed on runs 1, 3 and 5; run 5 used the merged fixes. See **Resume here**.
 
 ## Decisions made by the user (do not re-ask)
 | Topic | Decision |
@@ -130,7 +130,7 @@
   2. Dev agents wrote notes into `frontend/.agents/` and `backend/.agents/`. The orchestrator now moves them into the root (`_collect_stray_notes`), and `iter_files(include_hidden_agents=False)` excludes `.agents` at any depth.
   3. `view_file` is enabled but path-scoped (see the sandbox refinement).
 - These fixes were verified with unit tests plus a mock Celery acceptance run. **A second full live run after them has not been done yet.**
-- **57/57 backend tests pass.** Frontend `nuxi typecheck` and `npm run build` pass.
+- **57/57 backend tests passed at the end of session 1** (58 after fix 5). Frontend `nuxi typecheck` and `npm run build` pass.
 
 ## §12 acceptance checklist
 - [x] Auth flow: register, login, JWT refresh/rotation/blacklist, protected routes, and redirect to `/auth/login` (API tests plus the browser redirect; the forms were not submitted in the browser).
@@ -173,7 +173,19 @@
   - Up to that point, the backend and UI checks were passing.
   - As expected for pre-fix-3 code, the dev agents' notes writes were denied. This time both agents put their summaries inline instead of writing fallback files.
 - **Fix 4 (uncommitted):** `RETRYABLE_MARKERS` gains "unexpected eof", "network issue", "connection reset" and "payload is not completed". 57/57 tests pass.
-- **Next:** commit fix 4 to the PR branch, then do one live run to confirm fixes 3 and 4 (credits: ask first).
+- Fixes 1–4 were merged into `main` through PR #1 (merge commit `0501e32`).
+- **Run 5 (`9a159a77-…`, merged code): ALL CHECKS PASSED (live), in 23m52s.**
+  - Both dev agents wrote `.agents/fe_output.md` and `.agents/be_output.md` directly, with **0 "Access denied"** events and 0 retries. **Fix 3 is confirmed live.**
+  - QA passed on loop 1. The zip is 180K / 33 files, with no notes files or `.agents` inside. SHA256 matched, and `start_servers.sh` served 200 on the frontend, backend and `/api/`.
+  - Fix 4 (stream-reset retry) wasn't triggered in this run; only the unit test covers it.
+- **Fix 5 (PR #2):**
+  - `LLMRelay` separates a per-chunk `read_timeout` (default **180s**; `NEXUS_RELAY_READ_TIMEOUT_SECONDS`, via `EngineConfig.relay_read_timeout`) from a total per-request cap (1800s, previously 900s for both).
+  - A stalled stream is now cut after 3 minutes instead of 15. The harness sees an EOF, and fix 4 retries with a fresh agent.
+  - Test `test_relay_cuts_stalled_stream_after_read_timeout`. **58/58 pass.**
+- **Open items:**
+  - Local `main` has an unpushed, stale handoff commit `b3a3ee0`, so it diverges from `origin/main`. Ask the user before resetting it.
+  - Browser clicks never tested: login/register form submit, drag-and-drop upload, the download button.
+  - QA `run_command` is prompt-constrained only.
 
 ## Possible follow-ups
 - QA `run_command` is prompt-constrained only; there is no OS sandbox on macOS.

@@ -165,7 +165,13 @@ class LiveAgentRunner:
         for attempt in range(1, attempts + 1):
             pump = StreamPump(self.ctx, job.agent_name)
             try:
-                async with LLMRelay(cfg.api_base, cfg.api_key, extra_body=extra_body, on_event=pump.on_relay_event) as relay:
+                async with LLMRelay(
+                    cfg.api_base,
+                    cfg.api_key,
+                    extra_body=extra_body,
+                    read_timeout=cfg.relay_read_timeout,
+                    on_event=pump.on_relay_event,
+                ) as relay:
                     # A fresh Agent per attempt: never reuse a session whose connection has closed (§6.4).
                     async with Agent(job.config_fn(relay.base_url)) as agent:
                         prompt = job.prompt if attempt == 1 else RETRY_PREAMBLE + job.prompt

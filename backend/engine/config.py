@@ -55,6 +55,7 @@ class EngineConfig:
     max_qa_iterations: int
     retry_attempts: int = 4
     retry_initial_backoff: float = 70.0
+    relay_read_timeout: float = 180.0
 
     @property
     def is_live(self) -> bool:
@@ -74,4 +75,5 @@ def load_config() -> EngineConfig:
         max_qa_iterations=int(getattr(settings, "NEXUS_MAX_QA_ITERATIONS", 3)),
         retry_attempts=int(os.environ.get("NEXUS_RETRY_ATTEMPTS", "4")),
         retry_initial_backoff=float(os.environ.get("NEXUS_RETRY_BACKOFF_SECONDS", "70")),
+        relay_read_timeout=float(os.environ.get("NEXUS_RELAY_READ_TIMEOUT_SECONDS", "180")),
     )
