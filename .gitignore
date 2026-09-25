@@ -1,25 +1,69 @@
-# Secrets & local env
+# ---------------------------------------------------------------------------
+# Secrets & local environment
+# ---------------------------------------------------------------------------
 .env
+.env.*
+!.env.example
 *.local
+*.pem
+*.key
 
+# ---------------------------------------------------------------------------
 # Python
+# ---------------------------------------------------------------------------
 .venv/
+venv/
 __pycache__/
 *.py[cod]
+*.egg-info/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
 backend/db.sqlite3
 backend/*.sqlite3
+celerybeat-schedule*
 
+# ---------------------------------------------------------------------------
 # Node / Nuxt
+# ---------------------------------------------------------------------------
 node_modules/
 frontend/.nuxt/
 frontend/.output/
 frontend/.data/
+frontend/.cache/
 frontend/dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
 
-# Runtime data
+# ---------------------------------------------------------------------------
+# Runtime data (generated workspaces, uploads, archives, logs)
+# ---------------------------------------------------------------------------
 media/
 static/
 logs/
 *.log
+*.pid
+*.zip
+*.zip.part
+
+# Playwright / browser test artifacts
+test-results/
+playwright-report/
+.playwright-mcp/
+
+# ---------------------------------------------------------------------------
+# Editors, OS, tooling
+# ---------------------------------------------------------------------------
 .DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*~
+.claude/settings.local.json
