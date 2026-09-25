@@ -33,6 +33,22 @@ MANIFEST_SCHEMA = """\
 }"""
 
 
+# Contradiction classes the Team Lead must check its own design for. The first item is the one that
+# cost a live run a whole QA loop: check-in needed an `active → in_stock` edge its own table lacked.
+CONSISTENCY_CHECKLIST = """\
+   - State machines: every status change any endpoint, action or side effect performs (create,
+     check-in/out, cancel, return, restore, delete…) is an allowed edge in the transition table, or
+     is explicitly listed there as a system/forced transition.
+   - Fields: every field in a request or response shape exists in the data model with the same
+     name, type and nullability; enum/choice values are spelled identically everywhere.
+   - Endpoints: every UI action names an endpoint that exists with the same method and path, and
+     every endpoint the UI needs is in the REST API section and in manifest "api_endpoints".
+   - Errors: status codes and error bodies agree between the REST API section and the acceptance
+     checks; acceptance checks only require behaviour the spec actually defines.
+   - Manifest: its entities, endpoints, pages and files match the DDS; every file in the DDS file
+     plan is in "files" (and vice versa), and each file's owner matches its top-level directory."""
+
+
 def config(ctx: PipelineContext, session: str):
     def _fn(base_url: str):
         return build_config(
@@ -73,6 +89,13 @@ Produce exactly two files:
    component and store the frontend needs. Keep the scope tight: build what the requirement asks
    for, well, rather than extras.
 
+3. Consistency review (mandatory, before you finish). The developers build from these documents
+   alone, and a contradiction in them becomes a bug that QA only finds much later. Re-read both
+   files and fix every contradiction in place:
+{CONSISTENCY_CHECKLIST}
+   Then append a final section "## Consistency review" to the DDS listing each check above and
+   what you changed (or "consistent").
+
 Fixed technical decisions (put them in the DDS so both developers follow them):
 - Backend uses SQLite by default and PostgreSQL only when the POSTGRES_DB env var is set.
 - Backend reads CORS_ALLOWED_ORIGINS (comma-separated, default "http://localhost:3000,http://127.0.0.1:3000").
@@ -97,7 +120,10 @@ Diagnose the root cause of every failure (read the offending files), then write
 {root / REPAIR_PLAN_FILE}: a Markdown plan with two sections, "## Backend fixes" and
 "## Frontend fixes". Each fix names the exact file, the problem, and the precise change.
 Write "None." under a section that needs no changes. If the design itself was wrong, also
-patch {root / DDS_FILE} and {root / MANIFEST_FILE}. Do not edit application code yourself.
+patch {root / DDS_FILE} and {root / MANIFEST_FILE}, re-check the parts you changed against
+this checklist, and note the result under its "## Consistency review" section:
+{CONSISTENCY_CHECKLIST}
+Do not edit application code yourself.
 
 --- qa_report.md ---
 {qa_report}

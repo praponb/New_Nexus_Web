@@ -206,6 +206,7 @@ async def test_mock_pipeline_completes(project_task, monkeypatch):
     types_seen = {log.log_type for log in logs}
     assert {LogType.THOUGHT, LogType.TOOL_CALL, LogType.TOOL_RESULT, LogType.PHASE_CHANGE} <= types_seen
     assert {log.agent_name for log in logs} >= {"Team Lead", "Frontend Dev", "Backend Dev", "QA", "Packager"}
+    assert not any(log.content.startswith("Design check") for log in logs)  # mock design is consistent
 
 
 @pytest.mark.django_db(transaction=True)
@@ -513,6 +514,60 @@ def test_nested_agent_notes_are_collected_and_never_zipped(tmp_path):
     assert (root / ".agents" / "fe_output.md").read_text() == "root notes\n\nfallback fe notes\n\nstray fe notes"
     assert not (root / "frontend" / "fe_output.md").exists()
     assert not (root / "frontend" / ".agents").exists() and not (root / "backend" / ".agents").exists()
+
+
+def test_design_warnings_flag_structural_gaps():
+    from types import SimpleNamespace
+
+    from engine.checks import design_warnings
+
+    def ctx_with(dds, manifest):
+        docs = {".agents/dds_output.md": dds, ".agents/manifest.json": json.dumps(manifest)}
+        return SimpleNamespace(read=lambda rel, default="": docs.get(rel, default))
+
+    good = {
+        "files": [
+            {"path": "backend/manage.py", "owner": "backend"},
+            {"path": "frontend/pages/index.vue", "owner": "frontend"},
+        ],
+        "pages": [{"route": "/", "file": "frontend/pages/index.vue"}],
+        "api_endpoints": [{"method": "GET", "path": "/"}, {"method": "GET", "path": "/api/items/?status=all"}],
+    }
+    assert design_warnings(ctx_with("# DDS\n## Consistency review\n- ok", good)) == []
+
+    bad = {
+        "files": [
+            {"path": "backend/manage.py", "owner": "backend"},
+            {"path": "backend/manage.py", "owner": "backend"},
+            {"path": "frontend/app.vue", "owner": "backend"},
+        ],
+        "pages": [{"route": "/", "file": "frontend/pages/index.vue"}],
+        "api_endpoints": [{"method": "FETCH", "path": "/items"}],
+    }
+    warnings = design_warnings(ctx_with("# DDS without review", bad))
+    assert warnings == [
+        'dds_output.md has no "## Consistency review" section',
+        "file listed twice: backend/manage.py",
+        "frontend/app.vue: owner 'backend' does not match its directory",
+        "page file not in the file list: frontend/pages/index.vue",
+        "endpoint /items: unknown method 'FETCH'",
+        "endpoint FETCH /items: should be under /api/ with a trailing slash",
+    ]
+    assert design_warnings(ctx_with("", "not json")) [-1].startswith("manifest.json is not")
+
+
+def test_team_lead_prompts_require_a_consistency_review(tmp_path):
+    from types import SimpleNamespace
+
+    from engine.agents import architect
+
+    ctx = SimpleNamespace(root=tmp_path, project_name="Assets", project_description="", requirement="req")
+    plan = architect.plan_job(ctx).prompt
+    repair = architect.repair_job(ctx, 1, "STATUS: FAIL").prompt
+    for prompt in (plan, repair):
+        assert "## Consistency review" in prompt
+        assert "allowed edge in the transition table" in prompt  # the contradiction class that hit run 6
+    assert "{CONSISTENCY_CHECKLIST}" not in plan + repair
 
 
 def test_scrub_process_env_hides_secrets_but_engine_still_reads_them(monkeypatch):

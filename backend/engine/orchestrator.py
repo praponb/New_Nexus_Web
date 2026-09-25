@@ -234,6 +234,9 @@ class Pipeline:
         missing = [f for f in (DDS_FILE, MANIFEST_FILE) if not self.ctx.path(f).is_file()]
         if missing:
             raise GenerationPipelineError(f"Team Lead did not produce: {', '.join(missing)}")
+        warnings = checks.design_warnings(self.ctx)
+        if warnings:  # advisory: the developers and QA still run, but the user sees the gaps early
+            await self.sink.system(f"Design check: {len(warnings)} warning(s): " + "; ".join(warnings[:10]))
         await self.sink.progress(20)
 
     async def build(self) -> None:

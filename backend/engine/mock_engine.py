@@ -202,6 +202,10 @@ A task manager where users create, edit, complete, filter and delete todos.
 
 ## Acceptance checks
 - `manage.py check` and `makemigrations --check` pass; CRUD works via curl; the page adds a todo.
+
+## Consistency review
+- State machines: consistent (`completed` is a plain boolean; no transition table).
+- Fields, endpoints, errors, manifest: consistent.
 """
 
     def _manifest(self) -> dict:
