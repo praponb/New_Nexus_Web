@@ -119,7 +119,7 @@ async function copyCommand() {
                 <component :is="copied ? Check : Copy" class="h-4 w-4" />
               </button>
             </div>
-            <p class="mt-2 text-xs text-slate-500">Needs Python 3.10+ and Node 18+. Frontend on :3000, API on :8000.</p>
+            <p class="mt-2 text-xs text-slate-500">Needs Python 3.10+ and Node 18+. Frontend on :3000, API on :8000, or the next free ports if those are busy (the script prints the URLs).</p>
           </div>
           <BaseButton :to="`/projects/${id}`" variant="secondary" block>
             <RefreshCw class="h-4 w-4" /> Refine requirement &amp; regenerate

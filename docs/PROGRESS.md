@@ -208,6 +208,8 @@
   - The script waits for both servers before saying "ready", and stops both if either exits.
   - `.env.example` leaves ports, CORS and the API base commented out.
   - Verified live on a copy of the Asset Inventory app (8001/3002 picked, CORS header correct, watchdog cleanup). **63/63 pass.** Apps packaged before this fix still have the old script.
+- **Fix 9: repackaging.** `manage.py repackage <project_id>... | --all` rebuilds a completed project's zip and artifact row with the current delivery files, without rerunning agents (`orchestrator.repackage` / `build_package`). `write_support_files` now also refreshes `.env.example` and `README.md` when Nexus wrote them (matched by marker lines); files the agents wrote are left alone.
+  - Run 6 was repackaged: its zip is now sha256 `58fcf4e6…`, and it includes the new `start_servers.sh`. **64/64 pass.**
 - **Git:** local `main` was reset to `origin/main` (dropping the stale handoff commit `b3a3ee0`). `b_pbv_main` is **kept** at the user's request.
 - **Open items:**
   - Local `main` has an unpushed, stale handoff commit `b3a3ee0`, so it diverges from `origin/main`. Ask the user before resetting it.

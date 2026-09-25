@@ -209,6 +209,28 @@ async def test_mock_pipeline_completes(project_task, monkeypatch):
 
 
 @pytest.mark.django_db(transaction=True)
+async def test_repackage_refreshes_delivery_files_in_the_zip(project_task, monkeypatch):
+    from engine.packager import generator
+
+    project, task = project_task
+    monkeypatch.delenv("NEXUS_MOCK_INJECT_FAULT", raising=False)
+    assert await _run(task, monkeypatch) is not None
+    root = project.workspace / "generated"
+    (root / "start_servers.sh").write_text("#!/usr/bin/env bash\necho old\n")
+    (root / ".env.example").write_text(generator.ENV_EXAMPLE_MARKER + "\nBACKEND_PORT=8000\n")
+
+    result = await sync_to_async(orchestrator.repackage)(project.id)
+
+    assert {"start_servers.sh", ".env.example", "README.md"} <= set(result["files_written"])
+    db_artifact = await sync_to_async(GeneratedArtifact.objects.get)(project=project)
+    zip_path = Path(db_artifact.zip_file.path)
+    assert db_artifact.sha256_checksum == zipper.sha256_file(zip_path) == result["sha256_checksum"]
+    with zipfile.ZipFile(zip_path) as zf:
+        assert zf.read("todo-demo_generated/start_servers.sh").decode() == generator.START_SERVERS_SH
+        assert zf.read("todo-demo_generated/.env.example").decode() == generator.ENV_EXAMPLE
+
+
+@pytest.mark.django_db(transaction=True)
 async def test_mock_pipeline_self_corrects_injected_fault(project_task, monkeypatch):
     project, task = project_task
     monkeypatch.setenv("NEXUS_MOCK_INJECT_FAULT", "1")

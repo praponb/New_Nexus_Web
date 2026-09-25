@@ -16,7 +16,7 @@ from django.conf import settings
 from django.db import close_old_connections
 
 from apps.projects import workspace as ws
-from apps.projects.models import GeneratedArtifact, GenerationTask, LogType, ProjectStatus
+from apps.projects.models import GeneratedArtifact, GenerationTask, LogType, Project, ProjectStatus
 
 from . import checks
 from .agents import architect, backend_dev, frontend_dev, qa_tester
@@ -172,6 +172,26 @@ def _save_artifact(ctx: PipelineContext, info: zipper.ArchiveInfo) -> dict:
     }
 
 
+def build_package(ctx: PipelineContext) -> tuple[zipper.ArchiveInfo, dict]:
+    """Zip the generated root and record it as the project's artifact (replacing any old one)."""
+    dest = ws.packages_dir(ctx.workspace) / f"project_{ctx.project_id}_complete.zip"
+    info = zipper.build_archive(ctx.root, dest, f"{ctx.project_slug}_generated")
+    return info, _save_artifact(ctx, info)
+
+
+def repackage(project_id) -> dict:
+    """Rebuild a completed project's zip with the current delivery files, without rerunning agents."""
+    project = Project.objects.get(id=project_id)
+    task = project.latest_task()
+    if project.status != ProjectStatus.COMPLETED or task is None:
+        raise GenerationPipelineError(f"Project {project_id} is {project.status}; only completed projects are repackaged.")
+    ctx = _load_context(task.id)
+    ws.packages_dir(ctx.workspace).mkdir(parents=True, exist_ok=True)
+    written = generator.write_support_files(ctx)
+    _, artifact = build_package(ctx)
+    return {"files_written": written, **artifact}
+
+
 class Pipeline:
     def __init__(self, ctx: PipelineContext, runner: AgentRunner):
         self.ctx = ctx
@@ -291,9 +311,7 @@ class Pipeline:
         for rel in written:
             await self.sink.file_created("Packager", rel, "generator")
         await self.sink.log("Packager", LogType.TOOL_CALL, "zipper.build_archive", {"files_written": written})
-        dest = ws.packages_dir(self.ctx.workspace) / f"project_{self.ctx.project_id}_complete.zip"
-        info = await sync_to_async(zipper.build_archive)(self.ctx.root, dest, f"{self.ctx.project_slug}_generated")
-        artifact = await sync_to_async(_save_artifact)(self.ctx, info)
+        info, artifact = await sync_to_async(build_package)(self.ctx)
         await self.sink.log(
             "Packager",
             LogType.TOOL_RESULT,
