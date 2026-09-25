@@ -28,7 +28,17 @@ RETRYABLE_MARKERS = (
     "connectionclosed",
     "connection closed",
     "server disconnected",
+    "harness process exited unexpectedly",  # the harness dropped its WebSocket mid-turn (close 1006)
+    "unexpected eof",  # the model API reset a streaming response mid-turn
+    "network issue",
+    "connection reset",
+    "payload is not completed",
 )
+RETRY_PREAMBLE = """\
+Note: a previous attempt at this task was interrupted by a connection failure. Files it wrote may
+already be on disk. Check what exists first and finish or correct it; do not start over.
+
+"""
 WRITE_TOOLS = {"write_file", "edit_file", "create_file", "move_file"}
 ARG_PREVIEW_CHARS = 2000
 RESULT_PREVIEW_CHARS = 6000
@@ -158,7 +168,8 @@ class LiveAgentRunner:
                 async with LLMRelay(cfg.api_base, cfg.api_key, extra_body=extra_body, on_event=pump.on_relay_event) as relay:
                     # A fresh Agent per attempt: never reuse a session whose connection has closed (§6.4).
                     async with Agent(job.config_fn(relay.base_url)) as agent:
-                        response = await agent.chat(job.prompt)
+                        prompt = job.prompt if attempt == 1 else RETRY_PREAMBLE + job.prompt
+                        response = await agent.chat(prompt)
 
                         async def _drain():
                             async for chunk in response.chunks:
@@ -176,7 +187,7 @@ class LiveAgentRunner:
                     await self.ctx.sink.log(
                         job.agent_name,
                         LogType.SYSTEM,
-                        f"Model API unavailable ({type(exc).__name__}: {str(exc)[:200]}). "
+                        f"Agent connection or model API failed ({type(exc).__name__}: {str(exc)[:200]}). "
                         f"Retrying with a fresh agent in {int(delay)}s (attempt {attempt + 1}/{attempts}).",
                         {"attempt": attempt, "retry_in": delay},
                     )

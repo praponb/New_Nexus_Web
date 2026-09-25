@@ -1,7 +1,7 @@
 # Nexus: Implementation Progress & Handoff
 
 > **Resuming in a new session?** Read this file first, then `docs/IMPLEMENTATION_PLAN.md` (the approved plan) and `NEXUS_DESIGN_DOCUMENT.md` (the spec).
-> Last updated: 2026-09-25, ALL 7 PHASES DONE; live acceptance passed.
+> Last updated: 2026-09-25 (session 2). All 7 phases are done and live acceptance passed once. See **Resume here** for the failed second live run and its fix.
 
 ## Decisions made by the user (do not re-ask)
 | Topic | Decision |
@@ -138,14 +138,46 @@
 - [x] Agent execution: `POST /generate/` → Celery → orchestrator (mock and live).
 - [x] Streaming logs: Mission Control live stream, stepper and file tree (browser).
 - [x] Generated app completeness: the live kimi-k3 output has a full Nuxt 3 frontend and Django 5 backend.
-- [x] Self-correction: the injected syntax error is detected (compile check → QA FAIL) and repaired (mock). Live QA passed first time, so the repair path hasn't been exercised live.
+- [x] Self-correction: the injected syntax error is detected and repaired (mock). **Also exercised live** in run `b8f0e944`: a real Vue template bug was caught by QA and repaired in loop 2.
 - [x] Download: a valid zip with `.env.example` and an executable `start_servers.sh`, SHA256 verified (script and API). The browser button was not clicked, to avoid downloading files.
 - [x] Clean startup: `./start_servers.sh` served 200s for both the mock and the live archives.
 
+## Resume here (2026-09-25, second session)
+- **The second live run (project `e39016e8-…`) FAILED on its own, before the restart**, at 25% in the Frontend Dev agent:
+  - The agent wrote every frontend file, then called `filesystem-frontend.create_directory(".agents")`. That server is rooted at `generated/frontend`, so the call was denied (the notes are only reachable via `agents-notes`).
+  - The harness then dropped its WebSocket (close 1006). `is_retryable` didn't match `AntigravityConnectionError`, so the whole pipeline failed.
+  - Root cause: the old `SHARED_RULES` wording ("the only exception is the notes files under the `.agents` directory") read as allowing a relative path.
+- **Fixed (commit `739e126`, in PR #1):**
+  1. `SHARED_RULES`: every tool path must be absolute.
+  2. New `DEV_NOTES_RULE` in `agents/base.py`, used by both dev agents: write notes only via `agents-notes` at `{root}/.agents/<file>.md`. Task prompts name the server too.
+  3. `runner.py`: "harness process exited unexpectedly" is retryable. Attempts after the first prepend `RETRY_PREAMBLE` ("finish the files already on disk; don't start over").
+  4. Tests extended. **57/57 pass.**
+- **Third live run (project `b8f0e944-…`), started with `739e126`:** the dev agents did call `agents-notes`, but it was still denied, while `agents-notes.write_file` to `frontend/fe_output.md` *succeeded*.
+  - ~~Diagnosed as "the harness routes MCP calls by tool name"~~. **That was wrong**; see run 4 below.
+  - The denial did *not* crash the harness this time. The agents fell back to `frontend/fe_output.md` and `backend/be_output.md`.
+- **Run `b8f0e944` result: ALL CHECKS PASSED (live), with the first live self-correction:**
+  - QA loop 1 FAILED correctly: `TodoItem.vue` had `\"` escapes inside Vue attribute bindings, so `nuxi build` failed and the page was a Nuxt 500 in Playwright.
+  - The Team Lead's repair plan led the Frontend agent to a surgical fix (single quotes). The Backend agent correctly did nothing. QA loop 2 PASSED.
+  - Totals: 120 THOUGHT and 198 TOOL_CALL events, 39 files streamed, zip 128K / 34 files, SHA256 match. The extracted `start_servers.sh` served 200 on the backend, frontend and `/api/`.
+  - Known leak in this run (pre-fix-2 code): `backend/be_output.md` and `frontend/fe_output.md` are inside the zip. Fix 2's `_collect_stray_notes` prevents that.
+- **Run 4 (`2db677fd-…`, with the two-root server) was still denied**, and the error listed only `generated/frontend` as allowed. **Actual root cause:**
+  - `server-filesystem` implements the MCP roots protocol. When the client advertises roots, it REPLACES its command-line directories with them.
+  - The harness advertises each agent's `workspaces` as roots. Dev agents had `workspaces=[<side>_dir]`, so every filesystem server (including `agents-notes`) was re-rooted to that subtree.
+  - Proven over stdio: CLI dirs `[frontend, .agents]` with client roots `[frontend]` produced the identical denial; with roots `[frontend, .agents]` the write succeeded.
+- **Fix 3 (commit `b1d2a92`, in PR #1; supersedes fix 2's two-root server, which is reverted):**
+  - `build_config` adds `generated/.agents` to `workspaces` whenever the agent's workspace is a subtree that doesn't contain it. The view_file sandbox uses the same list.
+  - The registry docstring documents the roots override.
+  - `_collect_stray_notes` still handles the top-level fallback notes. 57/57 tests pass.
+- **Run 4 result: FAILED in QA loop 1** with `AntigravityExecutionError: unexpected EOF`.
+  - The QA agent viewed a full-page Playwright screenshot. Its next model request hung for about 9.5 minutes, then Moonshot reset the streaming connection (`ClientPayloadError`, `ConnectionResetError`, logged in `llm_relay._forward`). The harness itself said "network issue… please try again".
+  - Up to that point, the backend and UI checks were passing.
+  - As expected for pre-fix-3 code, the dev agents' notes writes were denied. This time both agents put their summaries inline instead of writing fallback files.
+- **Fix 4 (uncommitted):** `RETRYABLE_MARKERS` gains "unexpected eof", "network issue", "connection reset" and "payload is not completed". 57/57 tests pass.
+- **Next:** commit fix 4 to the PR branch, then do one live run to confirm fixes 3 and 4 (credits: ask first).
+
 ## Possible follow-ups
-- Re-run `./scripts/test_agent_pipeline.sh --mode live` after the environment-scrub and notes fixes.
 - QA `run_command` is prompt-constrained only; there is no OS sandbox on macOS.
-- No git commits yet: everything is untracked on `master`.
+- Git: commits `eefcfec` and `3f5a9ed` are on `main` and `b_pbv_main` (pushed to the private origin). Fix commits `739e126` and `b1d2a92` are pushed on `b_pbv_main`; PR #1 (https://github.com/praponb/New_Nexus_Web/pull/1) merges them into `main`.
 
 ## Where everything is
 - Approved plan: `docs/IMPLEMENTATION_PLAN.md` (a copy of `~/.claude/plans/pasted-content-id-cf92-please-read-rosy-pixel.md`).

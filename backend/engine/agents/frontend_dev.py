@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from ..context import DDS_FILE, FE_OUTPUT_FILE, MANIFEST_FILE, REPAIR_PLAN_FILE, PipelineContext
+from ..context import AGENTS_DIR, DDS_FILE, FE_OUTPUT_FILE, MANIFEST_FILE, REPAIR_PLAN_FILE, PipelineContext
 from ..mcp import registry
-from .base import FRONTEND_DEV, SHARED_RULES, AgentJob, build_config
+from .base import FRONTEND_DEV, DEV_NOTES_RULE, SHARED_RULES, AgentJob, build_config
 
 AGENT_NAME = FRONTEND_DEV
 
@@ -23,7 +23,7 @@ You are a senior frontend engineer. You implement complete Nuxt 3 applications:
 - Handle loading, empty and error states in the UI. Every endpoint the DDS lists for the UI must be wired up.
 You may only write inside the frontend directory. Do not create node_modules or lock files.
 
-""" + SHARED_RULES
+""" + SHARED_RULES + DEV_NOTES_RULE
 
 
 def config(ctx: PipelineContext, session: str):
@@ -32,10 +32,11 @@ def config(ctx: PipelineContext, session: str):
             ctx,
             base_url,
             session=session,
-            system_instructions=SYSTEM_PROMPT.replace("{root}", str(ctx.frontend_dir)),
+            system_instructions=SYSTEM_PROMPT.replace("{root}", str(ctx.frontend_dir))
+            .replace("{notes}", str(ctx.root / AGENTS_DIR))
+            .replace("{server}", "filesystem-frontend"),
             mcp_servers=[
                 registry.filesystem(ctx.frontend_dir, "filesystem-frontend"),
-                registry.filesystem(ctx.root / ".agents", "agents-notes"),
             ],
             workspace=ctx.frontend_dir,
         )

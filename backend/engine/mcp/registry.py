@@ -23,6 +23,8 @@ def thinking() -> types.McpStdioServer:
 
 
 def filesystem(root: Path, name: str = "filesystem") -> types.McpStdioServer:
+    """Note: when the client advertises MCP roots (the harness sends the agent's `workspaces`),
+    server-filesystem replaces `root` with those roots. Scope access through `workspaces`."""
     root = Path(root).resolve()
     root.mkdir(parents=True, exist_ok=True)
     return types.McpStdioServer(
