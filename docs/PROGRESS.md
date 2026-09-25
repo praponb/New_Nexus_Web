@@ -216,7 +216,8 @@
   - Then repackaged (fix 9): zip sha256 `58fcf4e6a064…`, 60 files, 212,937 bytes. The copy the user downloaded to `~/Downloads/nexus_project_asset-inventory.zip` has the identical sha256 and runs with the adaptive-ports `start_servers.sh`.
 - **Git:** local `main` was reset to `origin/main` (dropping the stale handoff commit `b3a3ee0`). `b_pbv_main` is **kept** at the user's request.
   - Merged into `main`: PR #1 (`0501e32`), PR #2 (`78913cd`), PR #3 (`3456bc7`) and PR #4 (`d39da24`, fixes 6–9).
-- **Dev stack:** restarted by the user at 17:58 (after fixes 8–9). It was verified as a single `start_dev.sh`, Daphne :8000, one Celery worker ("ready") and Nuxt :3000.
+- **Dev stack:** restarted by the user at 18:39 (after PR #7, so it runs fix 10). It was verified as Daphne :8000 (`/api/v1/auth/me/` → 401), one Celery worker ("ready"), Nuxt :3000 (200), and healthy Postgres and Redis.
+- **Test data:** the user ran `scripts/cleanup_test_data.py --yes`. The 8 e2e users, their projects and workspaces, and the `$TMPDIR/nexus-e2e-*` logs are gone; `media/workspaces/` went from 4.5 GB to 929 MB. The 4 older test accounts (`smoke14225`, `celery-smoke`, `ws4045`, `ui-demo7896`) remain; `--include-old-test-accounts` removes them if wanted.
 - **Login/register:** the user registered (`prapon@gmail.com`) and logged in through the browser UI themselves. My browser rules forbid me typing passwords.
 - **Fix 10: design consistency review** (for run 6's F1, a DDS self-contradiction found only in QA loop 3):
   - `architect.plan_job` adds a mandatory step 3. The Team Lead re-reads both documents against `CONSISTENCY_CHECKLIST` (state machines vs. every status-changing action, fields vs. model, UI actions vs. endpoints, errors vs. acceptance checks, manifest vs. DDS), fixes contradictions in place, and appends `## Consistency review` to the DDS. `repair_job` re-checks any design parts it patches. No extra agent run.
@@ -225,11 +226,10 @@
 - **Open items:**
   - The live fail-over after a stalled or reset model stream (fixes 4–5) is covered only by unit tests; a real stall can't be triggered on demand.
   - QA `run_command` is prompt-constrained only; there is no OS sandbox on macOS.
-  - Housekeeping (not done; my deletion was blocked by the permission system): 8 `e2e-*@example.com` users with their projects and workspaces, 4 older test accounts (`smoke14225`, `celery-smoke`, `ws4045`, `ui-demo7896`), 4.5 GB in `media/workspaces/`, and kept e2e logs in `$TMPDIR/nexus-e2e-*`.
 
 ## Possible follow-ups
 - QA `run_command` is prompt-constrained only; there is no OS sandbox on macOS.
-- Git: all work is merged into `main` on the private origin through PRs #1–#4 (https://github.com/praponb/New_Nexus_Web/pulls?q=is%3Apr). `b_pbv_main` is kept as the working branch.
+- Git: all work is merged into `main` on the private origin through PRs #1–#7 (https://github.com/praponb/New_Nexus_Web/pulls?q=is%3Apr). `b_pbv_main` is kept as the working branch.
 
 ## Where everything is
 - Approved plan: `docs/IMPLEMENTATION_PLAN.md` (a copy of `~/.claude/plans/pasted-content-id-cf92-please-read-rosy-pixel.md`).
