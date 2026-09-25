@@ -134,12 +134,12 @@
 
 ## §12 acceptance checklist
 - [x] Auth flow: register, login, JWT refresh/rotation/blacklist, protected routes, and redirect to `/auth/login` (API tests plus the browser redirect; the forms were not submitted in the browser).
-- [x] Upload handling: `.md` upload and editor content persisted (API tests plus the browser editor/preset save). The drag-and-drop file chooser was not exercised in the browser.
+- [x] Upload handling: `.md` upload and editor content persisted (API tests plus the browser editor/preset save). **Browser upload tested in session 2**: a file set through the drop zone's file input passed validation, rendered the preview and was saved as a draft byte-for-byte. A physical drag gesture was not simulated.
 - [x] Agent execution: `POST /generate/` → Celery → orchestrator (mock and live).
 - [x] Streaming logs: Mission Control live stream, stepper and file tree (browser).
 - [x] Generated app completeness: the live kimi-k3 output has a full Nuxt 3 frontend and Django 5 backend.
 - [x] Self-correction: the injected syntax error is detected and repaired (mock). **Also exercised live** in run `b8f0e944`: a real Vue template bug was caught by QA and repaired in loop 2.
-- [x] Download: a valid zip with `.env.example` and an executable `start_servers.sh`, SHA256 verified (script and API). The browser button was not clicked, to avoid downloading files.
+- [x] Download: a valid zip with `.env.example` and an executable `start_servers.sh`, SHA256 verified (script and API). **Browser button tested in session 2** (with the user's approval): `nexus_project_team-task-tracker.zip` reached `~/Downloads` with a matching SHA256.
 - [x] Clean startup: `./start_servers.sh` served 200s for both the mock and the live archives.
 
 ## Resume here (2026-09-25, second session)
@@ -182,9 +182,14 @@
   - `LLMRelay` separates a per-chunk `read_timeout` (default **180s**; `NEXUS_RELAY_READ_TIMEOUT_SECONDS`, via `EngineConfig.relay_read_timeout`) from a total per-request cap (1800s, previously 900s for both).
   - A stalled stream is now cut after 3 minutes instead of 15. The harness sees an EOF, and fix 4 retries with a fresh agent.
   - Test `test_relay_cuts_stalled_stream_after_read_timeout`. **58/58 pass.**
+- **Session 2 browser checks (Chrome, dev stack):**
+  - Create-project modal → upload through the drop zone's file input → Save Draft: persisted, byte-identical to the fixture.
+  - Zip download: SHA256 matches the DB.
+  - Delete through the in-page ConfirmDialog: the DB rows, workspace and uploaded file are all removed. No console errors.
+- **Git:** local `main` was reset to `origin/main` (dropping the stale handoff commit `b3a3ee0`). `b_pbv_main` is **kept** at the user's request.
 - **Open items:**
   - Local `main` has an unpushed, stale handoff commit `b3a3ee0`, so it diverges from `origin/main`. Ask the user before resetting it.
-  - Browser clicks never tested: login/register form submit, drag-and-drop upload, the download button.
+  - Browser: the login/register form submits were never tested. My browser rules forbid me typing passwords, so the user tests these.
   - QA `run_command` is prompt-constrained only.
 
 ## Possible follow-ups
