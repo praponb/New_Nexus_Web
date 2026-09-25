@@ -37,7 +37,6 @@ def config(ctx: PipelineContext, session: str):
             .replace("{server}", "filesystem-frontend"),
             mcp_servers=[
                 registry.filesystem(ctx.frontend_dir, "filesystem-frontend"),
-                registry.filesystem(ctx.root / AGENTS_DIR, "agents-notes"),
             ],
             workspace=ctx.frontend_dir,
         )
@@ -56,7 +55,7 @@ def build_job(ctx: PipelineContext) -> AgentJob:
     prompt = f"""\
 Implement the complete frontend described in the design below, writing every file owned by
 "frontend" in the manifest under {ctx.frontend_dir} (manifest paths are relative to {ctx.root}).
-When done, write {ctx.root / FE_OUTPUT_FILE} (with the agents-notes server): a Markdown summary listing every file you wrote,
+When done, write {ctx.root / FE_OUTPUT_FILE}: a Markdown summary listing every file you wrote,
 the routes, and how each page talks to the API.
 
 {_docs(ctx)}"""
@@ -68,8 +67,7 @@ def repair_job(ctx: PipelineContext, iteration: int) -> AgentJob:
 QA found problems. Apply every item under "## Frontend fixes" in the repair plan below with
 surgical edits to files under {ctx.frontend_dir}. Read each file before editing it. If the
 section says "None.", reply "No frontend changes needed." without editing anything.
-Afterwards append a short "## Repair {iteration}" section to {ctx.root / FE_OUTPUT_FILE}
-(with the agents-notes server).
+Afterwards append a short "## Repair {iteration}" section to {ctx.root / FE_OUTPUT_FILE}.
 
 --- repair_plan.md ---
 {ctx.read(REPAIR_PLAN_FILE)}

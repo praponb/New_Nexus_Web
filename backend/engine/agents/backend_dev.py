@@ -41,7 +41,6 @@ def config(ctx: PipelineContext, session: str):
             .replace("{server}", "filesystem-backend"),
             mcp_servers=[
                 registry.filesystem(ctx.backend_dir, "filesystem-backend"),
-                registry.filesystem(ctx.root / AGENTS_DIR, "agents-notes"),
             ],
             workspace=ctx.backend_dir,
         )
@@ -60,7 +59,7 @@ def build_job(ctx: PipelineContext) -> AgentJob:
     prompt = f"""\
 Implement the complete backend described in the design below, writing every file owned by
 "backend" in the manifest under {ctx.backend_dir} (manifest paths are relative to {ctx.root}).
-When done, write {ctx.root / BE_OUTPUT_FILE} (with the agents-notes server): a Markdown summary listing every file you wrote
+When done, write {ctx.root / BE_OUTPUT_FILE}: a Markdown summary listing every file you wrote
 and every endpoint with its request/response shape.
 
 {_docs(ctx)}"""
@@ -72,8 +71,7 @@ def repair_job(ctx: PipelineContext, iteration: int) -> AgentJob:
 QA found problems. Apply every item under "## Backend fixes" in the repair plan below with
 surgical edits to files under {ctx.backend_dir}. Read each file before editing it. If the
 section says "None.", reply "No backend changes needed." without editing anything.
-Afterwards append a short "## Repair {iteration}" section to {ctx.root / BE_OUTPUT_FILE}
-(with the agents-notes server).
+Afterwards append a short "## Repair {iteration}" section to {ctx.root / BE_OUTPUT_FILE}.
 
 --- repair_plan.md ---
 {ctx.read(REPAIR_PLAN_FILE)}

@@ -10,7 +10,7 @@ from google.antigravity import types
 from google.antigravity.connections.local.local_openai_connection_config import LocalOpenAIAgentConfig
 from google.antigravity.policy import allow_all, deny
 
-from ..context import PipelineContext
+from ..context import AGENTS_DIR, PipelineContext
 
 # The harness materialises MCP tool schemas as files under this directory and expects the model
 # to read them with the builtin view_file tool, so view_file stays enabled but path-scoped.
@@ -46,11 +46,11 @@ Operating rules (non-negotiable):
 - Keep going until your whole assignment is written, then reply with a short summary.
 """
 
-# Developer agents' code server is rooted in their own subtree, so notes need a second server.
+# Developer agents are rooted in their own subtree; build_config also exposes the notes directory.
 DEV_NOTES_RULE = """\
-- Notes/summary files live in {notes}. Write them ONLY with the `agents-notes` server's tools
-  (e.g. agents-notes write_file with path {notes}/<file>.md). Your `{server}` server cannot
-  reach that directory; calling it with a `.agents` path fails and ends your run.
+- Your `{server}` server can write two directories: your working directory above, and the
+  notes directory {notes}. Write notes/summary files there with absolute paths
+  ({notes}/<file>.md), never inside your working directory.
 """
 
 
@@ -81,9 +81,14 @@ def build_config(
     enabled = [types.BuiltinTools.FINISH, types.BuiltinTools.VIEW_FILE]
     run_command_config = None
     root = (workspace or ctx.root).resolve()
+    notes_dir = (ctx.root / AGENTS_DIR).resolve()
+    # The harness advertises `workspaces` as MCP roots, and server-filesystem REPLACES its
+    # command-line directories with them. A developer rooted in its own subtree therefore needs
+    # the notes directory listed here, or every write to .agents/ is denied.
+    workspaces = [root] if notes_dir == root or root in notes_dir.parents else [root, notes_dir]
     sandbox = deny(
         types.BuiltinTools.VIEW_FILE.value,
-        when=outside_roots([root, ctx.root / ".agents", HARNESS_BRAIN_DIR]),
+        when=outside_roots([*workspaces, HARNESS_BRAIN_DIR]),
         name="nexus-sandbox",
         reason="Reads are limited to the project workspace.",
     )
@@ -102,7 +107,7 @@ def build_config(
             run_command_config=run_command_config,
         ),
         mcp_servers=mcp_servers,
-        workspaces=[str(root)],
+        workspaces=[str(w) for w in workspaces],
         policies=[sandbox, allow_all()],
         save_dir=str(save_dir),
     )

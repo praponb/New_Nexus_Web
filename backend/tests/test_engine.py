@@ -351,13 +351,13 @@ def test_build_config_scopes_tools(tmp_path):
     enabled = {t.value for t in config.capabilities.enabled_tools}
     assert enabled == {"finish", "view_file"}
     assert config.policies[0].name == "nexus-sandbox"
-    assert [s.name for s in config.mcp_servers] == ["filesystem-backend", "agents-notes"]
-    assert config.workspaces == [str((ctx.root / "backend").resolve())]
-    # Notes must go through agents-notes with absolute paths (a relative `.agents` path sent to
-    # filesystem-backend is denied and crashed a live run).
+    assert [s.name for s in config.mcp_servers] == ["filesystem-backend"]
+    # Workspaces become MCP roots, which override server-filesystem's directories, so the notes
+    # directory must be listed or writes to .agents/ are denied (seen in live runs).
+    assert config.workspaces == [str((ctx.root / "backend").resolve()), str((ctx.root / ".agents").resolve())]
     assert "{" not in config.system_instructions.split("Operating rules")[1]
-    assert f"path {ctx.root / '.agents'}/<file>.md" in config.system_instructions
-    assert "Your `filesystem-backend` server cannot" in config.system_instructions
+    assert f"({ctx.root / '.agents'}/<file>.md)" in config.system_instructions
+    assert "Your `filesystem-backend` server can write two directories" in config.system_instructions
 
 
 def test_nested_agent_notes_are_collected_and_never_zipped(tmp_path):
@@ -384,10 +384,12 @@ def test_nested_agent_notes_are_collected_and_never_zipped(tmp_path):
     with zipfile.ZipFile(info_before.path) as zf:
         assert zf.namelist() == ["app/backend/manage.py"]  # nested .agents excluded too
 
+    (root / "frontend" / "fe_output.md").write_text("fallback fe notes")  # live-run fallback location
     moved = _collect_stray_notes(ctx)
-    assert sorted(moved) == ["backend/.agents/be_output.md", "frontend/.agents/fe_output.md"]
+    assert sorted(moved) == ["backend/.agents/be_output.md", "frontend/.agents/fe_output.md", "frontend/fe_output.md"]
     assert (root / ".agents" / "be_output.md").read_text() == "stray be notes"
-    assert (root / ".agents" / "fe_output.md").read_text() == "root notes\n\nstray fe notes"
+    assert (root / ".agents" / "fe_output.md").read_text() == "root notes\n\nfallback fe notes\n\nstray fe notes"
+    assert not (root / "frontend" / "fe_output.md").exists()
     assert not (root / "frontend" / ".agents").exists() and not (root / "backend" / ".agents").exists()
 
 

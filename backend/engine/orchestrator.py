@@ -22,7 +22,7 @@ from . import checks
 from .agents import architect, backend_dev, frontend_dev, qa_tester
 from .agents.base import BACKEND_DEV, FRONTEND_DEV, QA_TESTER, TEAM_LEAD, AgentJob
 from .config import load_config, scrub_process_env
-from .context import AGENTS_DIR, DDS_FILE, MANIFEST_FILE, QA_REPORT_FILE, REQUIREMENT_FILE, PipelineContext
+from .context import AGENTS_DIR, BE_OUTPUT_FILE, DDS_FILE, FE_OUTPUT_FILE, MANIFEST_FILE, QA_REPORT_FILE, REQUIREMENT_FILE, PipelineContext
 from .events import EventSink
 from .packager import generator, zipper
 
@@ -79,23 +79,35 @@ def _prepare_workspace(ctx: PipelineContext) -> None:
     req.write_text(ctx.requirement, encoding="utf-8")
 
 
+NOTES_FILENAMES = (Path(FE_OUTPUT_FILE).name, Path(BE_OUTPUT_FILE).name)
+
+
 def _collect_stray_notes(ctx: PipelineContext) -> list[str]:
-    """Move `.agents/` notes a developer wrote inside its own subtree into the root `.agents/`."""
+    """Move notes a developer wrote inside its own subtree (`<sub>/.agents/*` or a top-level
+    `<sub>/fe_output.md` / `be_output.md` fallback) into the root `.agents/`."""
     moved = []
     target = ctx.path(AGENTS_DIR)
+    target.mkdir(parents=True, exist_ok=True)
+
+    def _move(item: Path, label: str) -> None:
+        dest = target / item.name
+        if dest.exists():  # keep both: append the stray content
+            dest.write_text(dest.read_text(encoding="utf-8") + "\n\n" + item.read_text(encoding="utf-8"), encoding="utf-8")
+            item.unlink()
+        else:
+            item.replace(dest)
+        moved.append(label)
+
     for sub in (ctx.frontend_dir, ctx.backend_dir):
+        for name in NOTES_FILENAMES:
+            if (sub / name).is_file():
+                _move(sub / name, f"{sub.name}/{name}")
         stray = sub / AGENTS_DIR
         if not stray.is_dir():
             continue
         for item in stray.iterdir():
             if item.is_file():
-                dest = target / item.name
-                if dest.exists():  # keep both: append the stray content
-                    dest.write_text(dest.read_text(encoding="utf-8") + "\n\n" + item.read_text(encoding="utf-8"), encoding="utf-8")
-                    item.unlink()
-                else:
-                    item.replace(dest)
-                moved.append(f"{sub.name}/{AGENTS_DIR}/{item.name}")
+                _move(item, f"{sub.name}/{AGENTS_DIR}/{item.name}")
         shutil.rmtree(stray, ignore_errors=True)
     return moved
 
