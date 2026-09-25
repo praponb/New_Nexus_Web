@@ -197,6 +197,10 @@
   - `ProjectDetail.can_resume` drives a "Continue repair" button in Mission Control, next to "Start over".
   - `started_at` is now also set on TESTING.
   - **61/61 pass.** `nuxi typecheck` is clean. Not yet exercised live; run 6 is the candidate.
+- **Fix 7: the WebSocket history is sent in batches.** Run 6 has 2065 logs, so its one `history` message was 1.56 MB, over the 1 MiB Daphne/autobahn frame limit (`PayloadExceededError`). Mission Control then looped on "Connection lost. Reconnecting…".
+  - `apps/realtime/consumers.py` now sends the history as several `history` messages of about 256 KB each (`history_batches`). The client already appends them.
+  - **62/62 pass.**
+- **Dev-stack gotcha:** a second `start_dev.sh` while an old one is still running fails silently. Its Daphne can't bind :8000, so the old backend keeps serving stale code, and Nuxt falls back to :3001. Two Celery workers also end up on the same queue, so a job can land on the old code. Stop the old stack first.
 - **Git:** local `main` was reset to `origin/main` (dropping the stale handoff commit `b3a3ee0`). `b_pbv_main` is **kept** at the user's request.
 - **Open items:**
   - Local `main` has an unpushed, stale handoff commit `b3a3ee0`, so it diverges from `origin/main`. Ask the user before resetting it.

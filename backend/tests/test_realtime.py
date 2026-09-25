@@ -111,3 +111,27 @@ async def test_history_after_cursor(setup):
     history = await comm.receive_json_from()
     assert [log["content"] for log in history["data"]["logs"]] == ["thought 3"]
     await comm.disconnect()
+
+
+async def test_large_history_is_split_under_the_frame_limit(setup, monkeypatch):
+    from apps.realtime import consumers
+
+    project, task, token = setup
+    monkeypatch.setattr(consumers, "HISTORY_BATCH_BYTES", 2048)
+    await sync_to_async(task.logs.bulk_create)(
+        [task.logs.model(task=task, agent_name="QA", log_type=LogType.TEXT, content="x" * 500, sequence_num=i) for i in range(4, 40)]
+    )
+    comm = _communicator(project.id, token=token)
+    connected, _ = await comm.connect()
+    assert connected
+    seqs, batches = [], 0
+    while True:
+        message = await comm.receive_json_from()
+        if message["type"] != "history":
+            assert message["type"] == "phase_update"
+            break
+        batches += 1
+        assert message["data"]["task_id"] == str(task.id)
+        seqs += [log["sequence_num"] for log in message["data"]["logs"]]
+    assert batches > 1 and seqs == list(range(1, 40))
+    await comm.disconnect()

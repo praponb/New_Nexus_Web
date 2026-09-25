@@ -1,11 +1,13 @@
 """Live pipeline stream for one project.
 
-On connect: `history` (logs of the latest task, optionally after `?after=<seq>`) followed by a
-`phase_update` snapshot. Then every event the engine broadcasts: `log_event`, `phase_update`,
+On connect: `history` (logs of the latest task, optionally after `?after=<seq>`, split over as
+many messages as needed to stay under the WebSocket frame limit) followed by a `phase_update`
+snapshot. Then every event the engine broadcasts: `log_event`, `phase_update`,
 `file_created`, `pipeline_complete`, `pipeline_failed`.
 Close codes: 4401 unauthenticated, 4404 project not found / not owned.
 """
 
+import json
 from urllib.parse import parse_qs
 
 from channels.db import database_sync_to_async
@@ -17,6 +19,23 @@ from engine.broadcast import group_name
 from engine.events import log_payload
 
 HISTORY_LIMIT = 5000
+# Daphne/autobahn drop the connection on messages over 1 MiB; a long live run's history is larger.
+HISTORY_BATCH_BYTES = 256 * 1024
+
+
+def history_batches(logs: list[dict], budget: int | None = None) -> list[list[dict]]:
+    """Split `logs` into consecutive batches whose JSON size stays near `budget` (always >= 1 batch)."""
+    budget = budget or HISTORY_BATCH_BYTES
+    batches, batch, size = [], [], 0
+    for log in logs:
+        n = len(json.dumps(log, default=str).encode()) + 1
+        if batch and size + n > budget:
+            batches.append(batch)
+            batch, size = [], 0
+        batch.append(log)
+        size += n
+    batches.append(batch)
+    return batches
 
 
 class ProjectLogConsumer(AsyncJsonWebsocketConsumer):
@@ -41,7 +60,8 @@ class ProjectLogConsumer(AsyncJsonWebsocketConsumer):
         except ValueError:
             after = 0
         history, snapshot = await self._snapshot(after)
-        await self.send_json({"type": "history", "data": history})
+        for batch in history_batches(history["logs"]):
+            await self.send_json({"type": "history", "data": {"task_id": history["task_id"], "logs": batch}})
         await self.send_json({"type": "phase_update", "data": snapshot})
 
     async def disconnect(self, code):
