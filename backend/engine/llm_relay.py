@@ -43,20 +43,24 @@ class LLMRelay:
         api_key: str,
         *,
         extra_body: dict | None = None,
-        timeout: float = 900,
+        timeout: float = 1800,
+        read_timeout: float = 180,
         on_event: Callable[[str, dict], Awaitable[None] | None] | None = None,
     ):
         """`on_event(kind, payload)` receives taps the harness does not surface as chunks:
 
         - ("reasoning", {"text": delta}) for `reasoning_content` deltas in the model's reply
         - ("tool_result", {"id", "name", "content"}) for each tool message sent back to the model
+
+        `read_timeout` bounds the silence between upstream chunks. A stalled stream is cut, the
+        harness sees an EOF, and the runner retries with a fresh agent instead of waiting out `timeout`.
         """
         self.upstream_base = upstream_base.rstrip("/")
         self._on_event = on_event
         self._seen_tool_ids: set[str] = set()
         self._api_key = api_key
         self._extra_body = extra_body or {}
-        self._timeout = aiohttp.ClientTimeout(total=timeout, sock_read=timeout)
+        self._timeout = aiohttp.ClientTimeout(total=timeout, sock_read=read_timeout)
         self._runner: web.AppRunner | None = None
         self._session: aiohttp.ClientSession | None = None
         self.port: int | None = None

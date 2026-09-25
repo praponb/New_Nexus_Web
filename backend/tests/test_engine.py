@@ -105,6 +105,41 @@ async def test_relay_injects_key_and_taps_events():
     assert [p for k, p in events if k == "tool_result"] == [{"id": "c1", "name": "write_file", "content": "Successfully wrote"}]
 
 
+async def test_relay_cuts_stalled_stream_after_read_timeout():
+    import time
+
+    import aiohttp
+
+    release = asyncio.Event()
+
+    async def stalling(request: web.Request):
+        resp = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+        await resp.prepare(request)
+        await resp.write(b'data: {"choices": [{"delta": {"content": "partial"}}]}\n\n')
+        await release.wait()  # the model stalls mid-stream
+        return resp
+
+    app = web.Application()
+    app.router.add_post("/v1/chat/completions", stalling)
+    upstream = web.AppRunner(app)
+    await upstream.setup()
+    site = web.TCPSite(upstream, "127.0.0.1", 0)
+    await site.start()
+    base = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}/v1"
+    started = time.monotonic()
+    try:
+        async with LLMRelay(base, "sk-test", read_timeout=0.5) as relay:
+            async with aiohttp.ClientSession() as session:
+                with pytest.raises(aiohttp.ClientPayloadError):  # surfaces to the harness as an EOF
+                    async with session.post(f"{relay.base_url}/chat/completions", json={"stream": True}) as resp:
+                        await resp.read()
+                elapsed = time.monotonic() - started
+    finally:
+        release.set()
+        await upstream.cleanup()
+    assert elapsed < 5
+
+
 # --------------------------------------------------------------------------- fixtures
 @pytest.fixture
 def project_task(user, settings):
