@@ -54,6 +54,7 @@ export interface GenerationTask {
   current_phase: string
   progress_percentage: number
   qa_iterations: number
+  resume: boolean
   started_at: string | null
   finished_at: string | null
   created_at: string
@@ -90,6 +91,8 @@ export interface ProjectDetail extends Project {
   requirement: RequirementPreview | null
   latest_task: GenerationTask | null
   artifact: Artifact | null
+  /** The last run failed after reaching QA and can be continued in place. */
+  can_resume: boolean
 }
 
 export interface AgentLog {

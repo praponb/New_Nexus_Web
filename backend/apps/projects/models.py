@@ -85,6 +85,7 @@ class GenerationTask(models.Model):
     current_phase = models.CharField(max_length=50, default="INITIALIZING")
     progress_percentage = models.PositiveSmallIntegerField(default=0)  # 0 to 100
     qa_iterations = models.PositiveSmallIntegerField(default=0)
+    resume = models.BooleanField(default=False)  # continue a failed run's QA loop in place of a full rebuild
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

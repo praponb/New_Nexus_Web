@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, ArrowRight, Bot, RefreshCw, TriangleAlert, Wifi, WifiOff } from 'lucide-vue-next'
+import { ArrowLeft, ArrowRight, Bot, RefreshCw, TriangleAlert, Wifi, WifiOff, Wrench } from 'lucide-vue-next'
 import type { ProjectDetail } from '~/types/api'
 
 const route = useRoute()
@@ -10,6 +10,7 @@ const toast = useToast()
 const project = ref<ProjectDetail | null>(null)
 const stream = useProjectSocket(id)
 const restarting = ref(false)
+const resuming = ref(false)
 const redirectIn = ref<number | null>(null)
 let redirectTimer: ReturnType<typeof setInterval> | null = null
 
@@ -43,6 +44,16 @@ watch(stream.completedAt, (at) => {
 
 onBeforeUnmount(() => redirectTimer && clearInterval(redirectTimer))
 
+// Whether "Continue repair" is possible depends on the workspace the run left behind.
+watch(status, async (now, before) => {
+  if (now !== 'FAILED' || !before || before === 'FAILED') return
+  try {
+    project.value = await projects.get(id.value)
+  } catch {
+    /* keep the stale detail; the retry button still works */
+  }
+})
+
 function cancelRedirect() {
   if (redirectTimer) clearInterval(redirectTimer)
   redirectIn.value = null
@@ -58,6 +69,20 @@ async function restart() {
     toast.error('Could not restart', err?.message)
   } finally {
     restarting.value = false
+  }
+}
+
+async function resume() {
+  resuming.value = true
+  try {
+    await projects.generate(id.value, false, true)
+    stream.expectNewRun(true)
+    if (project.value) project.value.can_resume = false
+    toast.info('Continuing repair', 'Keeping the generated code and fixing the last QA failures.')
+  } catch (err: any) {
+    toast.error('Could not continue', err?.message)
+  } finally {
+    resuming.value = false
   }
 }
 
@@ -93,9 +118,27 @@ function openFile(path: string) {
         <BaseButton v-if="status === 'COMPLETED'" :to="`/projects/${id}/ready`" variant="glow">
           View delivery <ArrowRight class="h-4 w-4" />
         </BaseButton>
-        <BaseButton v-else-if="status === 'FAILED'" variant="secondary" :loading="restarting" @click="restart">
-          <RefreshCw class="h-4 w-4" /> Retry generation
-        </BaseButton>
+        <template v-else-if="status === 'FAILED'">
+          <BaseButton
+            variant="secondary"
+            :loading="restarting"
+            :disabled="resuming"
+            title="Discard the generated code and run every phase again"
+            @click="restart"
+          >
+            <RefreshCw class="h-4 w-4" /> {{ project?.can_resume ? 'Start over' : 'Retry generation' }}
+          </BaseButton>
+          <BaseButton
+            v-if="project?.can_resume"
+            variant="glow"
+            :loading="resuming"
+            :disabled="restarting"
+            title="Keep the generated code, repair it from the last QA report, then re-run QA"
+            @click="resume"
+          >
+            <Wrench class="h-4 w-4" /> Continue repair
+          </BaseButton>
+        </template>
       </div>
     </header>
 

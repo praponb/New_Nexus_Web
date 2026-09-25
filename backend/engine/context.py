@@ -17,6 +17,19 @@ REPAIR_PLAN_FILE = f"{AGENTS_DIR}/repair_plan.md"
 REQUIREMENT_FILE = f"{AGENTS_DIR}/user_requirement.md"
 
 
+def resume_problem(root: Path, requirement: str) -> str | None:
+    """Why a failed run in `root` can't be continued in place, or None if it can."""
+    if not all((root / f).is_file() for f in (DDS_FILE, MANIFEST_FILE, QA_REPORT_FILE)):
+        return "Nothing to continue: the last run never reached QA. Start a full generation instead."
+    try:
+        saved = (root / REQUIREMENT_FILE).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        saved = None
+    if saved != requirement:
+        return "The requirement changed since the last run. Start a full generation instead."
+    return None
+
+
 def free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -36,6 +49,8 @@ class PipelineContext:
     config: EngineConfig
     sink: EventSink
     qa_iteration: int = 0
+    resume: bool = False  # skip plan/build and repair from the last QA report
+    resume_from: int = 0  # QA loop the resumed run's report came from
     qa_backend_port: int = field(default_factory=free_port)
     qa_frontend_port: int = field(default_factory=free_port)
 

@@ -186,6 +186,30 @@
   - Create-project modal → upload through the drop zone's file input → Save Draft: persisted, byte-identical to the fixture.
   - Zip download: SHA256 matches the DB.
   - Delete through the in-page ConfirmDialog: the DB rows, workspace and uploaded file are all removed. No console errors.
+- **Run 6 (`8c50ba26-…`, "Asset Inventory", 55 files): FAILED at QA loop 3/3** after about 1h45m. The platform behaved correctly.
+  - Loops 1–2 found real bugs, and the repairs fixed all of them (B1–B6, FE1).
+  - Loop 3 found one new bug, F1: check-in returns 409 because the Team Lead's DDS contradicts itself. Its transition table has no `active → in_stock` edge, but its check-in spec requires one.
+  - The bug was hidden until loop 3 because check-in first crashed on B2 (the audit TypeError). No loops were left to repair it.
+- **Fix 6 (commit "Add \"Continue repair\"…" on `b_pbv_main`): "Continue repair" (resume) for failed runs.**
+  - `POST /generate {"resume": true}` creates a `GenerationTask(resume=True)` (migration `0003`).
+  - A resumed run keeps the workspace, skips plan and build, runs one repair cycle from the existing `.agents/qa_report.md`, then runs a fresh QA loop (1..max) and packages.
+  - The request is refused (409 `resume_unavailable`) unless the project is FAILED, the DDS, manifest and QA report exist, and the requirement is unchanged. `engine.context.resume_problem` enforces this in both the view and the orchestrator.
+  - `ProjectDetail.can_resume` drives a "Continue repair" button in Mission Control, next to "Start over".
+  - `started_at` is now also set on TESTING.
+  - **61/61 pass.** `nuxi typecheck` is clean. Not yet exercised live; run 6 is the candidate.
+- **Fix 7: the WebSocket history is sent in batches.** Run 6 has 2065 logs, so its one `history` message was 1.56 MB, over the 1 MiB Daphne/autobahn frame limit (`PayloadExceededError`). Mission Control then looped on "Connection lost. Reconnecting…".
+  - `apps/realtime/consumers.py` now sends the history as several `history` messages of about 256 KB each (`history_batches`). The client already appends them.
+  - **62/62 pass.**
+- **Dev-stack gotcha:** a second `start_dev.sh` while an old one is still running fails silently. Its Daphne can't bind :8000, so the old backend keeps serving stale code, and Nuxt falls back to :3001. Two Celery workers also end up on the same queue, so a job can land on the old code.
+  - **Fixed in `scripts/start_dev.sh`:** it now refuses to start while :8000, :3000 or a Nexus Celery worker are in use, and prints the stop command. It waits until Daphne listens on :8000, printing the log tail if it dies, and then watches every service. If any one exits, it says which and stops the stack. Verified live: preflight refusal, a clean start, and the watchdog on a killed worker.
+- **Fix 8: the generated `start_servers.sh` adapts its ports** (`engine/packager/generator.py`). A downloaded app run while Nexus was up put Django on 127.0.0.1:8000, beside Daphne's `*:8000`, which macOS allows. Nuxt moved itself to :3001, but CORS still allowed only :3000, so the browser saw "Failed to fetch" even though the server logged 200s.
+  - Default ports now move to the next free port. A port the user sets must be free.
+  - CORS always includes the actual frontend origin, and `NUXT_PUBLIC_API_BASE` follows the actual backend port.
+  - The script waits for both servers before saying "ready", and stops both if either exits.
+  - `.env.example` leaves ports, CORS and the API base commented out.
+  - Verified live on a copy of the Asset Inventory app (8001/3002 picked, CORS header correct, watchdog cleanup). **63/63 pass.** Apps packaged before this fix still have the old script.
+- **Fix 9: repackaging.** `manage.py repackage <project_id>... | --all` rebuilds a completed project's zip and artifact row with the current delivery files, without rerunning agents (`orchestrator.repackage` / `build_package`). `write_support_files` now also refreshes `.env.example` and `README.md` when Nexus wrote them (matched by marker lines); files the agents wrote are left alone.
+  - Run 6 was repackaged: its zip is now sha256 `58fcf4e6…`, and it includes the new `start_servers.sh`. **64/64 pass.**
 - **Git:** local `main` was reset to `origin/main` (dropping the stale handoff commit `b3a3ee0`). `b_pbv_main` is **kept** at the user's request.
 - **Open items:**
   - Local `main` has an unpushed, stale handoff commit `b3a3ee0`, so it diverges from `origin/main`. Ask the user before resetting it.

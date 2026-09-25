@@ -52,6 +52,17 @@ def test_zipper_excludes_build_output_and_keeps_exec_bit(tmp_path):
     assert not (tmp_path / "out" / "bundle.zip.part").exists()
 
 
+def test_start_servers_script_is_valid_bash_and_adapts_ports():
+    import subprocess
+
+    from engine.packager.generator import START_SERVERS_SH
+
+    subprocess.run(["bash", "-n"], input=START_SERVERS_SH, text=True, check=True)
+    # CORS and the API base must follow the ports actually chosen, not the 3000/8000 defaults.
+    assert 'pick_port "${FRONTEND_PORT:-3000}"' in START_SERVERS_SH
+    assert "$FRONTEND_ORIGINS" in START_SERVERS_SH and "http://localhost:$BACKEND_PORT" in START_SERVERS_SH
+
+
 # --------------------------------------------------------------------------- relay
 async def _fake_upstream(seen: dict):
     async def handler(request: web.Request):
@@ -198,6 +209,28 @@ async def test_mock_pipeline_completes(project_task, monkeypatch):
 
 
 @pytest.mark.django_db(transaction=True)
+async def test_repackage_refreshes_delivery_files_in_the_zip(project_task, monkeypatch):
+    from engine.packager import generator
+
+    project, task = project_task
+    monkeypatch.delenv("NEXUS_MOCK_INJECT_FAULT", raising=False)
+    assert await _run(task, monkeypatch) is not None
+    root = project.workspace / "generated"
+    (root / "start_servers.sh").write_text("#!/usr/bin/env bash\necho old\n")
+    (root / ".env.example").write_text(generator.ENV_EXAMPLE_MARKER + "\nBACKEND_PORT=8000\n")
+
+    result = await sync_to_async(orchestrator.repackage)(project.id)
+
+    assert {"start_servers.sh", ".env.example", "README.md"} <= set(result["files_written"])
+    db_artifact = await sync_to_async(GeneratedArtifact.objects.get)(project=project)
+    zip_path = Path(db_artifact.zip_file.path)
+    assert db_artifact.sha256_checksum == zipper.sha256_file(zip_path) == result["sha256_checksum"]
+    with zipfile.ZipFile(zip_path) as zf:
+        assert zf.read("todo-demo_generated/start_servers.sh").decode() == generator.START_SERVERS_SH
+        assert zf.read("todo-demo_generated/.env.example").decode() == generator.ENV_EXAMPLE
+
+
+@pytest.mark.django_db(transaction=True)
 async def test_mock_pipeline_self_corrects_injected_fault(project_task, monkeypatch):
     project, task = project_task
     monkeypatch.setenv("NEXUS_MOCK_INJECT_FAULT", "1")
@@ -234,6 +267,58 @@ async def test_pipeline_fails_after_max_qa_iterations(project_task, monkeypatch,
     assert "after 2 self-correction attempts" in project.error_message
     assert task.qa_iterations == 2 and task.finished_at is not None
     assert not await sync_to_async(GeneratedArtifact.objects.filter(project=project).exists)()
+
+
+class RecordingRunner(MockAgentRunner):
+    roles: list[str] = []
+
+    async def run(self, job):
+        RecordingRunner.roles.append(job.role)
+        return await super().run(job)
+
+
+async def _fail_then_queue_resume(project_task, monkeypatch, settings):
+    settings.NEXUS_MAX_QA_ITERATIONS = 1
+    project, task = project_task
+    monkeypatch.delenv("NEXUS_MOCK_INJECT_FAULT", raising=False)
+    assert await _run(task, monkeypatch, lambda ctx: AlwaysFailQA(ctx, delay=0)) is None
+    settings.NEXUS_MAX_QA_ITERATIONS = 3
+    return await sync_to_async(GenerationTask.objects.create)(project=project, resume=True)
+
+
+@pytest.mark.django_db(transaction=True)
+async def test_resumed_run_repairs_in_place_and_skips_plan_and_build(project_task, monkeypatch, settings):
+    project, _ = project_task
+    resumed = await _fail_then_queue_resume(project_task, monkeypatch, settings)
+    marker = project.workspace / "generated" / "backend" / "kept.txt"
+    marker.write_text("survives a resume")
+    RecordingRunner.roles = []
+
+    artifact = await _run(resumed, monkeypatch, lambda ctx: RecordingRunner(ctx, delay=0))
+
+    assert artifact is not None
+    assert sorted(RecordingRunner.roles[:3]) == ["architect_repair", "backend_repair", "frontend_repair"]
+    assert RecordingRunner.roles[3:] == ["qa"]
+    assert marker.read_text() == "survives a resume"
+    await sync_to_async(project.refresh_from_db)()
+    await sync_to_async(resumed.refresh_from_db)()
+    assert project.status == ProjectStatus.COMPLETED
+    assert resumed.qa_iterations == 1 and resumed.started_at and resumed.finished_at
+    assert "(iteration 1)" in (project.workspace / "generated" / ".agents" / "repair_plan.md").read_text()
+
+
+@pytest.mark.django_db(transaction=True)
+async def test_resume_refuses_a_changed_requirement(project_task, monkeypatch, settings):
+    project, _ = project_task
+    resumed = await _fail_then_queue_resume(project_task, monkeypatch, settings)
+    doc = await sync_to_async(RequirementDoc.objects.get)(project=project)
+    doc.raw_content = REQUIREMENT + " Also add tags."
+    await sync_to_async(doc.save)()
+
+    assert await _run(resumed, monkeypatch) is None
+    await sync_to_async(project.refresh_from_db)()
+    assert project.status == ProjectStatus.FAILED
+    assert "requirement changed" in project.error_message
 
 
 @pytest.mark.django_db(transaction=True)

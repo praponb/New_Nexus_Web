@@ -24,10 +24,11 @@ export function useProjects() {
   const saveRequirementContent = (id: string, content: string) =>
     request<RequirementDoc>(`${base}${id}/requirement/`, { method: 'POST', body: { content } })
 
-  const generate = (id: string, forceRestart = false) =>
+  /** `resume` continues a failed run from its last QA report instead of rebuilding from scratch. */
+  const generate = (id: string, forceRestart = false, resume = false) =>
     request<{ task_id: string; status: string }>(`${base}${id}/generate/`, {
       method: 'POST',
-      body: { force_restart: forceRestart },
+      body: { force_restart: forceRestart, resume },
     })
 
   const logs = (id: string, after?: number) =>

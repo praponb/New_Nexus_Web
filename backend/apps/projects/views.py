@@ -169,6 +169,15 @@ class ProjectViewSet(
             raise ApiError("Upload a requirement document before generating.", "requirement_missing", 400)
         if project.is_active and not _truthy(request.data.get("force_restart", False)):
             raise ApiError("A generation run is already in progress.", "generation_in_progress", 409)
+        resume = _truthy(request.data.get("resume", False))
+        if resume:
+            from engine.context import resume_problem
+
+            if project.status != ProjectStatus.FAILED:
+                raise ApiError("Only a failed run can be continued.", "resume_unavailable", 409)
+            problem = resume_problem(ws.generated_dir(project.workspace), project.requirement_doc.raw_content)
+            if problem:
+                raise ApiError(problem, "resume_unavailable", 409)
 
         month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         quota = int(getattr(settings, "NEXUS_MONTHLY_GENERATION_QUOTA", 25))
@@ -181,7 +190,7 @@ class ProjectViewSet(
             artifact.zip_file.delete(save=False)
             artifact.delete()
 
-        task = GenerationTask.objects.create(project=project, current_phase=ProjectStatus.QUEUED)
+        task = GenerationTask.objects.create(project=project, current_phase=ProjectStatus.QUEUED, resume=resume)
         project.status = ProjectStatus.QUEUED
         project.error_message = None
         project.save(update_fields=["status", "error_message", "updated_at"])

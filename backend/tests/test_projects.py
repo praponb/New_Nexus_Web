@@ -208,6 +208,37 @@ def test_generate_enforces_quota(auth_client, project, dispatched, settings):
     assert res.json()["error"]["code"] == "quota_exceeded"
 
 
+def _leave_failed_run(project):
+    agents = ws.generated_dir(project.workspace) / ".agents"
+    agents.mkdir(parents=True)
+    for name in ("dds_output.md", "manifest.json", "qa_report.md"):
+        (agents / name).write_text("x")
+    (agents / "user_requirement.md").write_text(project.requirement_doc.raw_content)
+    project.status = ProjectStatus.FAILED
+    project.save()
+
+
+def test_generate_resume_continues_a_failed_run(auth_client, project, dispatched):
+    _upload(auth_client, project)
+    res = auth_client.post(f"{BASE}{project.id}/generate/", {"resume": True}, format="json")
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "resume_unavailable"
+
+    project.status = ProjectStatus.FAILED
+    project.save()
+    res = auth_client.post(f"{BASE}{project.id}/generate/", {"resume": True}, format="json")
+    assert res.status_code == 409 and "never reached QA" in res.json()["error"]["message"]
+    assert auth_client.get(f"{BASE}{project.id}/").json()["data"]["can_resume"] is False
+
+    project.refresh_from_db()
+    _leave_failed_run(project)
+    assert auth_client.get(f"{BASE}{project.id}/").json()["data"]["can_resume"] is True
+    res = auth_client.post(f"{BASE}{project.id}/generate/", {"resume": True}, format="json")
+    assert res.status_code == 202
+    task = GenerationTask.objects.get(id=res.json()["data"]["task_id"])
+    assert task.resume is True and dispatched == [task.id]
+
+
 def test_requirement_locked_while_active(auth_client, project):
     project.status = ProjectStatus.GENERATING
     project.save()

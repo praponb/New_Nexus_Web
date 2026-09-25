@@ -16,13 +16,23 @@ from django.conf import settings
 from django.db import close_old_connections
 
 from apps.projects import workspace as ws
-from apps.projects.models import GeneratedArtifact, GenerationTask, LogType, ProjectStatus
+from apps.projects.models import GeneratedArtifact, GenerationTask, LogType, Project, ProjectStatus
 
 from . import checks
 from .agents import architect, backend_dev, frontend_dev, qa_tester
 from .agents.base import BACKEND_DEV, FRONTEND_DEV, QA_TESTER, TEAM_LEAD, AgentJob
 from .config import load_config, scrub_process_env
-from .context import AGENTS_DIR, BE_OUTPUT_FILE, DDS_FILE, FE_OUTPUT_FILE, MANIFEST_FILE, QA_REPORT_FILE, REQUIREMENT_FILE, PipelineContext
+from .context import (
+    AGENTS_DIR,
+    BE_OUTPUT_FILE,
+    DDS_FILE,
+    FE_OUTPUT_FILE,
+    MANIFEST_FILE,
+    QA_REPORT_FILE,
+    REQUIREMENT_FILE,
+    PipelineContext,
+    resume_problem,
+)
 from .events import EventSink
 from .packager import generator, zipper
 
@@ -45,6 +55,10 @@ def _load_context(task_id) -> PipelineContext:
     except Exception as exc:  # RelatedObjectDoesNotExist
         raise GenerationPipelineError("The project has no requirement document.") from exc
     workspace = project.workspace
+    resume_from = 0
+    if task.resume:
+        previous = project.generation_tasks.exclude(id=task.id).order_by("-created_at").first()
+        resume_from = max(previous.qa_iterations if previous else 0, 1)
     return PipelineContext(
         task_id=str(task.id),
         project_id=str(project.id),
@@ -56,6 +70,8 @@ def _load_context(task_id) -> PipelineContext:
         requirement=requirement,
         config=load_config(),
         sink=EventSink(task.id, project.id),
+        resume=task.resume,
+        resume_from=resume_from,
     )
 
 
@@ -156,6 +172,26 @@ def _save_artifact(ctx: PipelineContext, info: zipper.ArchiveInfo) -> dict:
     }
 
 
+def build_package(ctx: PipelineContext) -> tuple[zipper.ArchiveInfo, dict]:
+    """Zip the generated root and record it as the project's artifact (replacing any old one)."""
+    dest = ws.packages_dir(ctx.workspace) / f"project_{ctx.project_id}_complete.zip"
+    info = zipper.build_archive(ctx.root, dest, f"{ctx.project_slug}_generated")
+    return info, _save_artifact(ctx, info)
+
+
+def repackage(project_id) -> dict:
+    """Rebuild a completed project's zip with the current delivery files, without rerunning agents."""
+    project = Project.objects.get(id=project_id)
+    task = project.latest_task()
+    if project.status != ProjectStatus.COMPLETED or task is None:
+        raise GenerationPipelineError(f"Project {project_id} is {project.status}; only completed projects are repackaged.")
+    ctx = _load_context(task.id)
+    ws.packages_dir(ctx.workspace).mkdir(parents=True, exist_ok=True)
+    written = generator.write_support_files(ctx)
+    _, artifact = build_package(ctx)
+    return {"files_written": written, **artifact}
+
+
 class Pipeline:
     def __init__(self, ctx: PipelineContext, runner: AgentRunner):
         self.ctx = ctx
@@ -163,6 +199,8 @@ class Pipeline:
         self.sink = ctx.sink
 
     async def run(self) -> dict:
+        if self.ctx.resume:
+            return await self.resume()
         await self.sink.phase(ProjectStatus.PLANNING, active_agents=[TEAM_LEAD])
         await self.sink.system(
             f"Pipeline started ({self.ctx.config.mode} mode, model {self.ctx.config.model_name}).",
@@ -171,6 +209,23 @@ class Pipeline:
         await sync_to_async(_prepare_workspace)(self.ctx)
         await self.plan()
         await self.build()
+        await self.verify()
+        return await self.package()
+
+    async def resume(self) -> dict:
+        """Continue a failed run in place: repair from its last QA report, then re-run the QA loop."""
+        problem = await sync_to_async(resume_problem)(self.ctx.root, self.ctx.requirement)
+        if problem:
+            raise GenerationPipelineError(problem)
+        await self.sink.phase(ProjectStatus.TESTING, progress=62, active_agents=[TEAM_LEAD])
+        await self.sink.system(
+            f"Continuing the failed run ({self.ctx.config.mode} mode, model {self.ctx.config.model_name}): "
+            f"keeping the generated code and repairing from the QA loop {self.ctx.resume_from} report.",
+            mode=self.ctx.config.mode,
+        )
+        self.ctx.qa_dir.mkdir(parents=True, exist_ok=True)
+        self.ctx.sessions_dir.mkdir(parents=True, exist_ok=True)
+        await self.repair(self.ctx.resume_from, self.ctx.read(QA_REPORT_FILE), 62, 64)
         await self.verify()
         return await self.package()
 
@@ -203,7 +258,8 @@ class Pipeline:
 
     async def verify(self) -> None:
         max_iter = self.ctx.config.max_qa_iterations
-        await self.sink.phase(ProjectStatus.TESTING, active_agents=[QA_TESTER])
+        if self.sink.status != ProjectStatus.TESTING:  # a resumed run is already there
+            await self.sink.phase(ProjectStatus.TESTING, active_agents=[QA_TESTER])
         span = 25  # TESTING covers 65% → 90%
         for iteration in range(1, max_iter + 1):
             self.ctx.qa_iteration = iteration
@@ -235,17 +291,19 @@ class Pipeline:
                     f"QA verification failed after {max_iter} self-correction attempts. "
                     f"See .agents/qa_report.md.\n\n{qa_report[:1500]}"
                 )
-            await self.sink.log(
-                TEAM_LEAD, LogType.SYSTEM, f"⚠️ QA Failure detected. Initiating repair cycle {iteration}..."
-            )
-            await self.sink.progress(65 + span * iteration // max_iter - 5, active_agents=[TEAM_LEAD])
-            await self.runner.run(architect.repair_job(self.ctx, iteration, qa_report))
-            await self.sink.progress(65 + span * iteration // max_iter - 3, active_agents=[FRONTEND_DEV, BACKEND_DEV])
-            await asyncio.gather(
-                self.runner.run(frontend_dev.repair_job(self.ctx, iteration)),
-                self.runner.run(backend_dev.repair_job(self.ctx, iteration)),
-            )
-            await self._tidy_notes()
+            end = 65 + span * iteration // max_iter
+            await self.repair(iteration, qa_report, end - 5, end - 3)
+
+    async def repair(self, iteration: int, qa_report: str, plan_pct: int, fix_pct: int) -> None:
+        await self.sink.log(TEAM_LEAD, LogType.SYSTEM, f"⚠️ QA Failure detected. Initiating repair cycle {iteration}...")
+        await self.sink.progress(plan_pct, active_agents=[TEAM_LEAD])
+        await self.runner.run(architect.repair_job(self.ctx, iteration, qa_report))
+        await self.sink.progress(fix_pct, active_agents=[FRONTEND_DEV, BACKEND_DEV])
+        await asyncio.gather(
+            self.runner.run(frontend_dev.repair_job(self.ctx, iteration)),
+            self.runner.run(backend_dev.repair_job(self.ctx, iteration)),
+        )
+        await self._tidy_notes()
 
     async def package(self) -> dict:
         await self.sink.phase(ProjectStatus.PACKAGING, active_agents=["Packager"])
@@ -253,9 +311,7 @@ class Pipeline:
         for rel in written:
             await self.sink.file_created("Packager", rel, "generator")
         await self.sink.log("Packager", LogType.TOOL_CALL, "zipper.build_archive", {"files_written": written})
-        dest = ws.packages_dir(self.ctx.workspace) / f"project_{self.ctx.project_id}_complete.zip"
-        info = await sync_to_async(zipper.build_archive)(self.ctx.root, dest, f"{self.ctx.project_slug}_generated")
-        artifact = await sync_to_async(_save_artifact)(self.ctx, info)
+        info, artifact = await sync_to_async(build_package)(self.ctx)
         await self.sink.log(
             "Packager",
             LogType.TOOL_RESULT,
