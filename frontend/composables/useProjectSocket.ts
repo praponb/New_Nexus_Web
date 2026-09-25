@@ -43,11 +43,13 @@ export function useProjectSocket(projectId: MaybeRefOrGetter<string>) {
   let pingTimer: ReturnType<typeof setInterval> | null = null
   let closedByUser = false
 
-  function reset() {
+  function reset(keepFiles = false) {
     logs.value = []
     seen.clear()
-    filePaths.clear()
-    files.value = []
+    if (!keepFiles) {
+      filePaths.clear()
+      files.value = []
+    }
     lastSeq = 0
     lastFile.value = null
   }
@@ -204,9 +206,10 @@ export function useProjectSocket(projectId: MaybeRefOrGetter<string>) {
     socket = null
   }
 
-  /** Call after POST /generate so the next run starts from a clean slate. */
-  function expectNewRun() {
-    reset()
+  /** Call after POST /generate so the next run starts from a clean slate. A resumed run keeps
+   *  the generated files, so pass `keepFiles` to leave the file tree in place. */
+  function expectNewRun(keepFiles = false) {
+    reset(keepFiles)
     status.value = 'QUEUED'
     progress.value = 0
     errorMessage.value = null

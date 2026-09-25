@@ -236,6 +236,58 @@ async def test_pipeline_fails_after_max_qa_iterations(project_task, monkeypatch,
     assert not await sync_to_async(GeneratedArtifact.objects.filter(project=project).exists)()
 
 
+class RecordingRunner(MockAgentRunner):
+    roles: list[str] = []
+
+    async def run(self, job):
+        RecordingRunner.roles.append(job.role)
+        return await super().run(job)
+
+
+async def _fail_then_queue_resume(project_task, monkeypatch, settings):
+    settings.NEXUS_MAX_QA_ITERATIONS = 1
+    project, task = project_task
+    monkeypatch.delenv("NEXUS_MOCK_INJECT_FAULT", raising=False)
+    assert await _run(task, monkeypatch, lambda ctx: AlwaysFailQA(ctx, delay=0)) is None
+    settings.NEXUS_MAX_QA_ITERATIONS = 3
+    return await sync_to_async(GenerationTask.objects.create)(project=project, resume=True)
+
+
+@pytest.mark.django_db(transaction=True)
+async def test_resumed_run_repairs_in_place_and_skips_plan_and_build(project_task, monkeypatch, settings):
+    project, _ = project_task
+    resumed = await _fail_then_queue_resume(project_task, monkeypatch, settings)
+    marker = project.workspace / "generated" / "backend" / "kept.txt"
+    marker.write_text("survives a resume")
+    RecordingRunner.roles = []
+
+    artifact = await _run(resumed, monkeypatch, lambda ctx: RecordingRunner(ctx, delay=0))
+
+    assert artifact is not None
+    assert sorted(RecordingRunner.roles[:3]) == ["architect_repair", "backend_repair", "frontend_repair"]
+    assert RecordingRunner.roles[3:] == ["qa"]
+    assert marker.read_text() == "survives a resume"
+    await sync_to_async(project.refresh_from_db)()
+    await sync_to_async(resumed.refresh_from_db)()
+    assert project.status == ProjectStatus.COMPLETED
+    assert resumed.qa_iterations == 1 and resumed.started_at and resumed.finished_at
+    assert "(iteration 1)" in (project.workspace / "generated" / ".agents" / "repair_plan.md").read_text()
+
+
+@pytest.mark.django_db(transaction=True)
+async def test_resume_refuses_a_changed_requirement(project_task, monkeypatch, settings):
+    project, _ = project_task
+    resumed = await _fail_then_queue_resume(project_task, monkeypatch, settings)
+    doc = await sync_to_async(RequirementDoc.objects.get)(project=project)
+    doc.raw_content = REQUIREMENT + " Also add tags."
+    await sync_to_async(doc.save)()
+
+    assert await _run(resumed, monkeypatch) is None
+    await sync_to_async(project.refresh_from_db)()
+    assert project.status == ProjectStatus.FAILED
+    assert "requirement changed" in project.error_message
+
+
 @pytest.mark.django_db(transaction=True)
 async def test_pipeline_fails_cleanly_without_requirement(user):
     project = await sync_to_async(Project.objects.create)(owner=user, name="Empty")

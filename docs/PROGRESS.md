@@ -186,6 +186,17 @@
   - Create-project modal → upload through the drop zone's file input → Save Draft: persisted, byte-identical to the fixture.
   - Zip download: SHA256 matches the DB.
   - Delete through the in-page ConfirmDialog: the DB rows, workspace and uploaded file are all removed. No console errors.
+- **Run 6 (`8c50ba26-…`, "Asset Inventory", 55 files): FAILED at QA loop 3/3** after about 1h45m. The platform behaved correctly.
+  - Loops 1–2 found real bugs, and the repairs fixed all of them (B1–B6, FE1).
+  - Loop 3 found one new bug, F1: check-in returns 409 because the Team Lead's DDS contradicts itself. Its transition table has no `active → in_stock` edge, but its check-in spec requires one.
+  - The bug was hidden until loop 3 because check-in first crashed on B2 (the audit TypeError). No loops were left to repair it.
+- **Fix 6 (commit "Add \"Continue repair\"…" on `b_pbv_main`): "Continue repair" (resume) for failed runs.**
+  - `POST /generate {"resume": true}` creates a `GenerationTask(resume=True)` (migration `0003`).
+  - A resumed run keeps the workspace, skips plan and build, runs one repair cycle from the existing `.agents/qa_report.md`, then runs a fresh QA loop (1..max) and packages.
+  - The request is refused (409 `resume_unavailable`) unless the project is FAILED, the DDS, manifest and QA report exist, and the requirement is unchanged. `engine.context.resume_problem` enforces this in both the view and the orchestrator.
+  - `ProjectDetail.can_resume` drives a "Continue repair" button in Mission Control, next to "Start over".
+  - `started_at` is now also set on TESTING.
+  - **61/61 pass.** `nuxi typecheck` is clean. Not yet exercised live; run 6 is the candidate.
 - **Git:** local `main` was reset to `origin/main` (dropping the stale handoff commit `b3a3ee0`). `b_pbv_main` is **kept** at the user's request.
 - **Open items:**
   - Local `main` has an unpushed, stale handoff commit `b3a3ee0`, so it diverges from `origin/main`. Ask the user before resetting it.

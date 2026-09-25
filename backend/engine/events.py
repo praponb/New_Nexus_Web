@@ -153,7 +153,7 @@ class EventSink:
         task.current_phase = status
         task.progress_percentage = max(0, min(100, pct))
         fields = ["current_phase", "progress_percentage"]
-        if status == ProjectStatus.PLANNING and task.started_at is None:
+        if status in (ProjectStatus.PLANNING, ProjectStatus.TESTING) and task.started_at is None:
             task.started_at = dj_timezone.now()
             fields.append("started_at")
         if status in (ProjectStatus.COMPLETED, ProjectStatus.FAILED):

@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
-from .models import AgentStepLog, GeneratedArtifact, GenerationTask, Project, RequirementDoc
+from . import workspace as ws
+from .models import AgentStepLog, GeneratedArtifact, GenerationTask, Project, ProjectStatus, RequirementDoc
 
 REQUIREMENT_PREVIEW_CHARS = 600
 
@@ -22,6 +23,7 @@ class GenerationTaskSerializer(serializers.ModelSerializer):
             "current_phase",
             "progress_percentage",
             "qa_iterations",
+            "resume",
             "started_at",
             "finished_at",
             "created_at",
@@ -113,9 +115,10 @@ class ProjectDetailSerializer(ProjectSerializer):
     requirement = serializers.SerializerMethodField()
     latest_task = serializers.SerializerMethodField()
     artifact = serializers.SerializerMethodField()
+    can_resume = serializers.SerializerMethodField()
 
     class Meta(ProjectSerializer.Meta):
-        fields = ProjectSerializer.Meta.fields + ("requirement", "latest_task", "artifact")
+        fields = ProjectSerializer.Meta.fields + ("requirement", "latest_task", "artifact", "can_resume")
 
     def get_requirement(self, obj):
         doc = _requirement_or_none(obj)
@@ -139,3 +142,12 @@ class ProjectDetailSerializer(ProjectSerializer):
     def get_artifact(self, obj):
         artifact = _artifact_or_none(obj)
         return GeneratedArtifactSerializer(artifact).data if artifact else None
+
+    def get_can_resume(self, obj) -> bool:
+        """A failed run can be continued in place (see `generate` with `resume`)."""
+        doc = _requirement_or_none(obj)
+        if obj.status != ProjectStatus.FAILED or doc is None:
+            return False
+        from engine.context import resume_problem
+
+        return resume_problem(ws.generated_dir(obj.workspace), doc.raw_content) is None
