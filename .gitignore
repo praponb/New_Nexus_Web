@@ -1,0 +1,25 @@
+# Secrets & local env
+.env
+*.local
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+backend/db.sqlite3
+backend/*.sqlite3
+
+# Node / Nuxt
+node_modules/
+frontend/.nuxt/
+frontend/.output/
+frontend/.data/
+frontend/dist/
+
+# Runtime data
+media/
+static/
+logs/
+*.log
+.DS_Store

@@ -1,0 +1,152 @@
+# Nexus: Implementation Progress & Handoff
+
+> **Resuming in a new session?** Read this file first, then `docs/IMPLEMENTATION_PLAN.md` (the approved plan) and `NEXUS_DESIGN_DOCUMENT.md` (the spec).
+> Last updated: 2026-09-25, ALL 7 PHASES DONE; live acceptance passed.
+
+## Decisions made by the user (do not re-ask)
+| Topic | Decision |
+|---|---|
+| LLM | **Moonshot only**: `kimi-k3` at `https://api.moonshot.ai/v1`, set in `.env` `MODEL_*`. No Gemini path. |
+| Infra | **Full stack via Docker**: `docker-compose.yml` runs Postgres 16 (host port **5433**) and Redis 7 (6379). Celery runs the pipeline and `channels_redis` fans events out. |
+| Pacing | Run all 7 phases back to back, verifying each one. Stop only if blocked. |
+| Mock mode | Add `NEXUS_ENGINE_MODE=mock|live`. Mock is a scripted stream plus a template Todo app. Tests use mock; final acceptance uses live. |
+
+## Environment facts
+- Python venv: `.venv` (Python 3.12.13, created with `uv venv -p 3.12`). Install with `uv pip install -p .venv/bin/python -r backend/requirements.txt`.
+- The system `python3` is 3.14. Don't use it for the venv.
+- Node 24.16 and npm 11.13 are installed. There is no `timeout` command on macOS.
+- Docker Desktop is now running and the `nexus-postgres` / `nexus-redis` containers are up. Migrations are applied to Postgres.
+- **SDK gap:** `google-antigravity` 0.1.18's `LocalOpenAIAgentConfig` sends only `base_url` (via `GemmaEndpoint`), with no API key or headers. Plan: `engine/llm_relay.py`, a local aiohttp proxy that adds `Authorization: Bearer $MODEL_API_KEY` and forwards to `MODEL_API_BASE`.
+- Useful SDK facts:
+  - `Agent(config)` is an async context manager. `await agent.chat(prompt)` returns a `ChatResponse`; `.chunks` yields `Thought`, `Text`, `ToolCall` and `ToolResult`.
+  - `types.McpStdioServer(name=..., command=, args=)`: the name must match `^[a-zA-Z0-9_-]+$`.
+  - `policies=[policy.allow_all()]` is required when MCP or write tools are enabled. Policy module: `google.antigravity.hooks.policy`; also check `google.antigravity.policy`.
+  - The SDK source is in `.venv/lib/python3.12/site-packages/google/antigravity/`.
+- `.env` holds the user's original `MODEL_*` lines plus a runtime block appended during setup (`NEXUS_ENGINE_MODE=live`, `DB_ENGINE=postgres`, `POSTGRES_*` on port 5433, `REDIS_URL`, `CHANNEL_LAYER=redis`, `DJANGO_SECRET_KEY`).
+- **Known issue:** `npm install` in `frontend/` stalled twice during registry metadata fetches (`node_modules` still empty). Re-run with `cd frontend && npm install --no-fund --no-audit --fetch-timeout=60000 --fetch-retries=5`, in the background, and poll. `package.json` pins **Nuxt 3** (`^3.21.11`), `@pinia/nuxt ^0.11.3` with `pinia ^3`, `@nuxtjs/tailwindcss ^6.14` (Tailwind 3.4), `shiki ^3`, `typescript ^5.9` and `vue-tsc ^2.2`.
+
+## Phase status
+### Phase 1: Scaffolding. Done, except frontend verification
+- Directories, `git init` (no commits), `.gitignore`, `.env.example`, `docker-compose.yml`.
+- `scripts/setup_environment.sh` and `scripts/start_dev.sh` (Daphne :8000, a Celery `engine.celery_app` worker with `--pool=threads`, Nuxt :3000; logs go to `logs/`).
+- Django project `backend/nexus_backend`. Apps live in `backend/apps/{accounts,projects,realtime}` with `name="apps.<x>"` and `label="<x>"`.
+- `settings.py`:
+  - Loads the repo-root `.env`.
+  - `DB_ENGINE=postgres` selects Postgres; anything else falls back to SQLite.
+  - `CHANNEL_LAYER=redis|memory`.
+  - Celery settings.
+  - `NEXUS_ENGINE_MODE`, `NEXUS_TASK_BACKEND` (`celery|thread|inline`), `NEXUS_MAX_QA_ITERATIONS` and `NEXUS_MONTHLY_GENERATION_QUOTA`.
+  - `WORKSPACES_ROOT = MEDIA_ROOT/workspaces`.
+- Frontend files written so far: `package.json`, `nuxt.config.ts` (`ssr:false`, runtimeConfig `apiBase` / `wsBase`, component `pathPrefix:false`), `tailwind.config.js` (ESM import of typography), `assets/css/main.css` (glass-card, text-gradient, shiki styles), `app.vue`, a placeholder `pages/index.vue`, and `public/favicon.svg`. The empty directory tree from §8 has also been created.
+- **Still to do:** finish `npm install`, then verify with `npx nuxi prepare && npm run build`.
+
+### Phase 2: Models, DB, Auth. Done and verified
+- `apps/accounts/models.py`: User with a UUID pk, `USERNAME_FIELD=email`, and a manager that auto-generates usernames. Admin is registered.
+- `apps/projects/models.py`: all §4.2 models. Additions beyond the spec:
+  - `GenerationTask.created_at`
+  - `GeneratedArtifact.total_lines_of_code`
+  - `Project.save()` auto-fills the slug and `workspace_dir`
+  - `ACTIVE_STATUSES`
+  - `Project.latest_task()`
+- `nexus_backend/api.py`: `EnvelopeJSONRenderer`, `envelope_exception_handler`, `ApiError(message, code, status_code)` and `ok()`.
+- Auth at `/api/v1/auth/`: register, login, refresh (rotation and blacklist), logout, and me (GET and PATCH, with a quota summary).
+- Tests: `backend/tests/` (`conftest.py`, `test_auth.py`) use `nexus_backend/settings_test.py` (SQLite in memory, memory channel layer, temp media, `NEXUS_TASK_BACKEND=inline`). **5/5 pass.** Run them with `cd backend && ../.venv/bin/python -m pytest -q`.
+
+### Phase 3: Projects API. Done and verified
+- `apps/projects/serializers.py`: `ProjectSerializer` (list/create; includes `has_requirement`, `download_ready`, `progress_percentage`), `ProjectDetailSerializer` (adds `requirement` with preview and raw content, `latest_task`, `artifact`), plus Requirement, Task, Artifact and Log serializers.
+- `apps/projects/views.py`: `ProjectViewSet` (list, create, retrieve, update, destroy, owner-scoped) with actions `requirement` (GET/POST), `generate` (202; 409 while active unless `force_restart`; 429 over monthly quota; deletes old artifact; calls `engine.tasks.dispatch(task)` and stores the returned job id), `logs` (`?task_id=`, `?after=<seq>`), `files`, `files/content?path=` (JSON: path, size, extension, is_binary, truncated, content) and `download` (FileResponse, `X-Checksum-SHA256`).
+- Uploads: `.md` only, text-ish MIME, 5 MB, NUL/control-byte binary check (`_is_binary_upload`, so stray non-UTF-8 bytes are decoded with replacement rather than rejected), at least 20 words.
+- `apps/projects/urls.py` uses a `SimpleRouter` (DefaultRouter's API root clashes with list at `""`), mounted at `api/v1/projects/`.
+- `engine/tasks.py` is a stub `dispatch()` that returns `None`. Phase 4 replaces it.
+- Tests: `tests/test_projects.py`. **39/39 pass overall.** A curl run against runserver on Postgres went through register, create, upload, files, generate (202, then 409), download (404) and delete (204).
+
+### Phase 1 frontend: `npm install` completed (847 packages, `nuxt prepare` ran in postinstall).
+
+### Phase 4: Engine. Done and verified
+- **Live SDK smoke test PASSED** (`cd backend && ../.venv/bin/python -m engine.devtools.sdk_smoke <dir>`): kimi-k3 through `engine/llm_relay.py`, and the MCP `write_file` landed in the workspace.
+- Harness facts:
+  - kimi-k3 yields only `ToolCall` and `Text` chunks, with **no `Thought` and no `ToolResult` chunks**.
+  - `LLMRelay(on_event=...)` taps the missing pieces: SSE `reasoning_content` becomes `("reasoning", {text})`, and the request's `role:"tool"` messages become `("tool_result", {...})`, deduplicated by id.
+  - The live runner starts **one relay per agent attempt**, so events are attributed correctly.
+- Sandboxing: agents get `enabled_tools=[FINISH]` plus MCP servers. File I/O goes only through filesystem MCP servers rooted in the workspace. QA additionally gets `RUN_COMMAND` (daemons, sandbox flag).
+  - **Not yet verified live:** whether `enabled_tools=[FINISH]` works with the harness. If an agent errors on it, fall back to `disabled_tools=[VIEW_FILE, CREATE_FILE, EDIT_FILE, ...]`.
+- Files:
+  - `engine/config.py`, `llm_relay.py`, `context.py` (`PipelineContext`, `.agents/*` file constants, QA ports picked by `free_port()`), `events.py` (`EventSink`: persists an `AgentStepLog` and then broadcasts; handles phase, progress, `file_created`, complete and fail), and `broadcast.py` (group `project_{id}`, message `{"type": "relay.event", "event": {type, data}}`).
+  - `mcp/registry.py`: thinking, filesystem and playwright servers.
+  - `agents/{base,architect,frontend_dev,backend_dev,qa_tester}.py`: prompts, `build_config`, and `AgentJob(role, agent_name, prompt, config_fn, extra)`.
+  - `runner.py`: `StreamPump`, and `LiveAgentRunner` (a fresh Agent and relay per attempt, backoff of 70s×2^n on 429/503/etc., a 45-minute timeout per agent).
+  - `mock_engine.py`: `MockAgentRunner`, which writes `templates/todo_app`; `NEXUS_MOCK_INJECT_FAULT=1` injects a syntax error that the repair loop then fixes. `NEXUS_MOCK_DELAY` sets the step delay (default 0.12s).
+  - `checks.py`: `NEXUS_QA_CHECKS=off|fast|full` (live defaults to full). Checks cover layout and manifest, compileall, an isolated venv under `workspace/.qa`, then `manage.py check`, `makemigrations --check` and `migrate`, then `npm install` and `nuxi build`.
+  - `orchestrator.py` (`run_pipeline`, which never raises; failures mark FAILED and emit `pipeline_failed`). A QA pass also requires the deterministic checks to pass, and after each QA run it kills anything listening on the QA ports.
+  - `packager/{generator,zipper}.py`, `celery_app.py`, and `tasks.py` (`dispatch`: celery, thread or inline).
+- The template Todo app (`engine/templates/todo_app`) passes `manage.py check` and `migrate`, and its frontend passes `npm install` and `nuxi build`.
+- Migration `projects/0002_widen_file_paths`: FileField `max_length` 100 → 500. The workspace zip path is longer than 100 characters; Postgres rejected it, but SQLite never enforced the limit.
+- Tests: `tests/test_engine.py` (zipper, relay taps, pump, retry with a fresh agent, mock pipeline happy path, fault → repair, fail after max iterations, missing requirement). **48/48 pass overall.**
+- A mock run through a real Celery worker (threads pool) on Postgres and Redis reached COMPLETED with 28 files and 86 logs.
+
+### Phase 5: WebSockets. Done and verified
+- `apps/realtime/middleware.py` (`JWTQueryAuthMiddleware`, `?token=`), `consumers.py` (`ProjectLogConsumer`), `routing.py` (`ws/projects/<uuid>/logs/`), and `nexus_backend/asgi.py` (`ProtocolTypeRouter` + `AllowedHostsOriginValidator`).
+- Protocol:
+  - The server accepts, then closes with **4401** (no or bad token) or **4404** (not the owner).
+  - On connect it sends `{"type":"history","data":{task_id, logs:[...]}}` (honouring `?after=<seq>`), then a `phase_update` snapshot with `snapshot:true`, `status`, `error_message` and `artifact`.
+  - Live events: `log_event`, `phase_update`, `file_created`, `pipeline_complete` and `pipeline_failed`. `{"type":"ping"}` gets a `pong`.
+- `scripts/ws_watch.py`: a watcher with reconnect-and-dedupe that asserts the required log types.
+- Tests: `tests/test_realtime.py` (5). **53/53 pass overall.**
+- Live check: Daphne on :8766 with a Celery worker (mock) and Docker Redis. REST register → create → upload → generate, and `ws_watch` saw the whole stream through `pipeline_complete` (THOUGHT, TOOL_CALL and more; 33 files streamed). Download returned 200.
+- `CORS_EXPOSE_HEADERS` now includes `X-Checksum-SHA256`.
+
+### Phase 6: Frontend. Done and verified
+- Core:
+  - `types/api.ts`, `stores/auth.ts` (tokens and user in localStorage under `nexus.auth`).
+  - `composables/useApi.ts`: envelope unwrap, `ApiError`, and a single-flight refresh on 401 with one retry.
+  - `useAuth`, `useProjects` (download fetches a blob with the auth header), `useToast`, and `useProjectSocket` (reconnect with backoff, `?after=`, dedupe by seq, `expectNewRun`, seeding from `/files/`).
+  - `middleware/auth.global.ts`.
+  - `utils/{pipeline,format,markdown,presets,fileTree,highlight}.ts`. Shiki is lazy-loaded; Markdown goes through marked + DOMPurify.
+- Components: `ui/*` (BaseButton, BaseInput, StatusBadge, BaseModal, ConfirmDialog, ToastHost, NexusLogo), `auth/AgentFlowGraphic`, `dashboard/*`, `requirement/*`, `generation/*`, `delivery/*`, `common/FileTreeNode`.
+- Pages: `auth/login`, `auth/register`, `dashboard`, `projects/[id]/{index,mission-control,ready,generate(→mission-control)}`.
+- Verified: `nuxi typecheck` and `npm run build` pass (a build fails with "Another Nuxt dev is already running" if the dev server is up).
+- Browser run-through in Chrome, mock worker with fault injection:
+  - Steps: auth redirect → dashboard → create modal → editor preset with split preview → Start → Mission Control streaming (stepper, QA loop 1 FAIL, repair cycle) → auto-redirect → Ready (stats, 2 QA loops, Shiki explorer, README, download card).
+  - No console errors.
+  - The session was injected via localStorage; the login and register forms were not submitted in the browser.
+- Bugs found and fixed:
+  - **redis-py 8 defaults `socket_timeout=5`**, the same as channels_redis's BZPOPMIN block, so idle WebSockets died with 1011 "Timeout reading". `CHANNEL_LAYERS` hosts now use `{"address": REDIS_URL, "socket_timeout": 30}`.
+  - Grid overflow on `ready` and `mission-control` (now `minmax(0,1fr)`).
+  - Modal autofocus.
+  - Badge wrapping.
+  - 24-hour timestamps.
+
+### Phase 7: Scripts & acceptance. Done
+- `scripts/test_agent_pipeline.sh [--mode mock|live] [--inject-fault] [--skip-startup] [--requirement F] [--timeout S] [--verify-only PROJECT_ID]`:
+  - Runs a private Daphne on a free port and a Celery worker on a private queue (`NEXUS_CELERY_QUEUE`, setting `CELERY_TASK_DEFAULT_QUEUE`, default `nexus`; `start_dev.sh` passes `-Q`).
+  - Flow: register → create → upload the fixture → generate → `ws_watch` → **log in again** (access tokens last 15 minutes; live runs take longer) → assertions → download → SHA256 check → unzip → `start_servers.sh` with `env -i` on free ports → poll `localhost` (Nuxt dev binds `::1`).
+- **Mock + inject-fault acceptance PASSED**: 2 QA iterations, QA PASS, SHA256 match, and the extracted app served 200 on the frontend, backend and `/api/`.
+- **LIVE acceptance (kimi-k3) PASSED**, project `9ddc5158-…`:
+  - The pipeline completed with 59 THOUGHT and 102 TOOL_CALL events. QA passed on loop 1, after all deterministic checks passed, including a hand-written migration that matched the models.
+  - The live QA agent ran 14 curl API checks and drove the UI with Playwright; its report is in `.agents/qa_report.md`.
+  - The first script run failed only on the expired token. Re-verified with `--verify-only`: all checks passed, including `start_servers.sh`.
+- Fixes prompted by the live run:
+  1. **Environment scrubbing** (`engine/config.py:scrub_process_env`, called at the start of `run_pipeline`): the harness merges `os.environ` into agent subprocesses, so QA's shell could see `MODEL_API_KEY`, and `POSTGRES_DB` would point generated apps at Nexus's database. These variables are now removed from the process environment and read through `env_value()`.
+  2. Dev agents wrote notes into `frontend/.agents/` and `backend/.agents/`. The orchestrator now moves them into the root (`_collect_stray_notes`), and `iter_files(include_hidden_agents=False)` excludes `.agents` at any depth.
+  3. `view_file` is enabled but path-scoped (see the sandbox refinement).
+- These fixes were verified with unit tests plus a mock Celery acceptance run. **A second full live run after them has not been done yet.**
+- **57/57 backend tests pass.** Frontend `nuxi typecheck` and `npm run build` pass.
+
+## §12 acceptance checklist
+- [x] Auth flow: register, login, JWT refresh/rotation/blacklist, protected routes, and redirect to `/auth/login` (API tests plus the browser redirect; the forms were not submitted in the browser).
+- [x] Upload handling: `.md` upload and editor content persisted (API tests plus the browser editor/preset save). The drag-and-drop file chooser was not exercised in the browser.
+- [x] Agent execution: `POST /generate/` → Celery → orchestrator (mock and live).
+- [x] Streaming logs: Mission Control live stream, stepper and file tree (browser).
+- [x] Generated app completeness: the live kimi-k3 output has a full Nuxt 3 frontend and Django 5 backend.
+- [x] Self-correction: the injected syntax error is detected (compile check → QA FAIL) and repaired (mock). Live QA passed first time, so the repair path hasn't been exercised live.
+- [x] Download: a valid zip with `.env.example` and an executable `start_servers.sh`, SHA256 verified (script and API). The browser button was not clicked, to avoid downloading files.
+- [x] Clean startup: `./start_servers.sh` served 200s for both the mock and the live archives.
+
+## Possible follow-ups
+- Re-run `./scripts/test_agent_pipeline.sh --mode live` after the environment-scrub and notes fixes.
+- QA `run_command` is prompt-constrained only; there is no OS sandbox on macOS.
+- No git commits yet: everything is untracked on `master`.
+
+## Where everything is
+- Approved plan: `docs/IMPLEMENTATION_PLAN.md` (a copy of `~/.claude/plans/pasted-content-id-cf92-please-read-rosy-pixel.md`).
+- Spec: `NEXUS_DESIGN_DOCUMENT.md`. The original prompt is in `CLAUDE_CODE_PROMPT.md`.
