@@ -52,6 +52,17 @@ def test_zipper_excludes_build_output_and_keeps_exec_bit(tmp_path):
     assert not (tmp_path / "out" / "bundle.zip.part").exists()
 
 
+def test_start_servers_script_is_valid_bash_and_adapts_ports():
+    import subprocess
+
+    from engine.packager.generator import START_SERVERS_SH
+
+    subprocess.run(["bash", "-n"], input=START_SERVERS_SH, text=True, check=True)
+    # CORS and the API base must follow the ports actually chosen, not the 3000/8000 defaults.
+    assert 'pick_port "${FRONTEND_PORT:-3000}"' in START_SERVERS_SH
+    assert "$FRONTEND_ORIGINS" in START_SERVERS_SH and "http://localhost:$BACKEND_PORT" in START_SERVERS_SH
+
+
 # --------------------------------------------------------------------------- relay
 async def _fake_upstream(seen: dict):
     async def handler(request: web.Request):

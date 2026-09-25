@@ -202,6 +202,12 @@
   - **62/62 pass.**
 - **Dev-stack gotcha:** a second `start_dev.sh` while an old one is still running fails silently. Its Daphne can't bind :8000, so the old backend keeps serving stale code, and Nuxt falls back to :3001. Two Celery workers also end up on the same queue, so a job can land on the old code.
   - **Fixed in `scripts/start_dev.sh`:** it now refuses to start while :8000, :3000 or a Nexus Celery worker are in use, and prints the stop command. It waits until Daphne listens on :8000, printing the log tail if it dies, and then watches every service. If any one exits, it says which and stops the stack. Verified live: preflight refusal, a clean start, and the watchdog on a killed worker.
+- **Fix 8: the generated `start_servers.sh` adapts its ports** (`engine/packager/generator.py`). A downloaded app run while Nexus was up put Django on 127.0.0.1:8000, beside Daphne's `*:8000`, which macOS allows. Nuxt moved itself to :3001, but CORS still allowed only :3000, so the browser saw "Failed to fetch" even though the server logged 200s.
+  - Default ports now move to the next free port. A port the user sets must be free.
+  - CORS always includes the actual frontend origin, and `NUXT_PUBLIC_API_BASE` follows the actual backend port.
+  - The script waits for both servers before saying "ready", and stops both if either exits.
+  - `.env.example` leaves ports, CORS and the API base commented out.
+  - Verified live on a copy of the Asset Inventory app (8001/3002 picked, CORS header correct, watchdog cleanup). **63/63 pass.** Apps packaged before this fix still have the old script.
 - **Git:** local `main` was reset to `origin/main` (dropping the stale handoff commit `b3a3ee0`). `b_pbv_main` is **kept** at the user's request.
 - **Open items:**
   - Local `main` has an unpushed, stale handoff commit `b3a3ee0`, so it diverges from `origin/main`. Ask the user before resetting it.

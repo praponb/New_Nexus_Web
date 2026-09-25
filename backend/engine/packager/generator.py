@@ -16,8 +16,6 @@ echo " Starting Your Generated WebApp "
 echo "=========================================="
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKEND_PORT="${BACKEND_PORT:-8000}"
-FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 
 if [ -f "$PROJECT_ROOT/.env" ]; then
     set -a
@@ -37,6 +35,40 @@ if [ -z "$PYTHON_BIN" ]; then
     done
 fi
 
+# Ports: a port you set (env or .env) must be free; a default moves to the next free port.
+port_busy() {
+    "$PYTHON_BIN" - "$1" <<'PY'
+import socket, sys
+port = int(sys.argv[1])
+for family, host in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as s:
+            s.settimeout(0.5)
+            if s.connect_ex((host, port)) == 0:
+                sys.exit(0)
+    except OSError:
+        pass
+sys.exit(1)
+PY
+}
+
+pick_port() {  # $1 = port, $2 = 1 if the user chose it
+    local port="$1"
+    while port_busy "$port"; do
+        if [ "$2" = "1" ]; then
+            echo "Port $port is already in use. Stop whatever is using it or choose another port." >&2
+            return 1
+        fi
+        port=$((port + 1))
+    done
+    echo "$port"
+}
+
+BACKEND_PORT="$(pick_port "${BACKEND_PORT:-8000}" "${BACKEND_PORT:+1}")"
+FRONTEND_PORT="$(pick_port "${FRONTEND_PORT:-3000}" "${FRONTEND_PORT:+1}")"
+[ "$BACKEND_PORT" = "8000" ] || echo "--> Port 8000 is busy; the backend will use $BACKEND_PORT."
+[ "$FRONTEND_PORT" = "3000" ] || echo "--> Port 3000 is busy; the frontend will use $FRONTEND_PORT."
+
 # 1. Setup Backend
 echo "--> Setting up Python Virtual Environment ($PYTHON_BIN)..."
 cd "$PROJECT_ROOT/backend"
@@ -53,29 +85,57 @@ cd "$PROJECT_ROOT/frontend"
 npm install --no-fund --no-audit --cache "/tmp/npm-cache-$(basename "$PROJECT_ROOT")"
 
 # 3. Launch Services Concurrently
+BACKEND_PID=""
+FRONTEND_PID=""
+kill_tree() {
+    local child
+    for child in $(pgrep -P "$1" 2>/dev/null); do kill_tree "$child"; done
+    kill "$1" 2>/dev/null || true
+}
+cleanup() {
+    echo "Shutting down servers..."
+    for pid in $BACKEND_PID $FRONTEND_PID; do kill_tree "$pid"; done
+    exit "${1:-0}"
+}
+trap cleanup SIGINT SIGTERM
+
+wait_for() {  # $1 = url, $2 = pid, $3 = name
+    for _ in $(seq 1 120); do
+        curl -s -o /dev/null "$1" && return 0
+        kill -0 "$2" 2>/dev/null || { echo "$3 exited during startup (see the output above)." >&2; return 1; }
+        sleep 1
+    done
+    echo "$3 did not respond at $1 within 120s." >&2
+    return 1
+}
+
+# The frontend's origin is always allowed, whatever port it ended up on.
+FRONTEND_ORIGINS="http://localhost:$FRONTEND_PORT,http://127.0.0.1:$FRONTEND_PORT"
+
 echo "--> Starting Backend on http://localhost:$BACKEND_PORT..."
 cd "$PROJECT_ROOT/backend"
-CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-http://localhost:$FRONTEND_PORT,http://127.0.0.1:$FRONTEND_PORT}" \
+CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:+$CORS_ALLOWED_ORIGINS,}$FRONTEND_ORIGINS" \
     .venv/bin/python manage.py runserver "$BACKEND_PORT" &
 BACKEND_PID=$!
+wait_for "http://127.0.0.1:$BACKEND_PORT/" "$BACKEND_PID" "The backend" || cleanup 1
 
 echo "--> Starting Frontend on http://localhost:$FRONTEND_PORT..."
 cd "$PROJECT_ROOT/frontend"
 NUXT_PUBLIC_API_BASE="${NUXT_PUBLIC_API_BASE:-http://localhost:$BACKEND_PORT}" \
     npx nuxi dev --port "$FRONTEND_PORT" &
 FRONTEND_PID=$!
-
-cleanup() {
-    echo "Shutting down servers..."
-    kill $BACKEND_PID $FRONTEND_PID 2>/dev/null || true
-    exit 0
-}
-trap cleanup SIGINT SIGTERM
+wait_for "http://localhost:$FRONTEND_PORT/" "$FRONTEND_PID" "The frontend" || cleanup 1
 
 echo "Application is ready!"
 echo "Frontend: http://localhost:$FRONTEND_PORT"
 echo "Backend:  http://localhost:$BACKEND_PORT"
-wait
+echo "Press Ctrl+C to stop both servers."
+# Stop both servers if either one exits.
+while kill -0 "$BACKEND_PID" 2>/dev/null && kill -0 "$FRONTEND_PID" 2>/dev/null; do
+    sleep 2
+done
+echo "A server exited unexpectedly." >&2
+cleanup 1
 """
 
 ENV_EXAMPLE = """\
@@ -85,7 +145,8 @@ ENV_EXAMPLE = """\
 DJANGO_SECRET_KEY=change-me
 DJANGO_DEBUG=true
 DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
-CORS_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+# Extra allowed origins; start_servers.sh always adds the frontend it starts.
+# CORS_ALLOWED_ORIGINS=https://app.example.com
 
 # Optional PostgreSQL (SQLite is used when POSTGRES_DB is unset)
 # POSTGRES_DB=app
@@ -94,12 +155,12 @@ CORS_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 # POSTGRES_HOST=/tmp
 # POSTGRES_PORT=5432
 
-# Frontend (Nuxt)
-NUXT_PUBLIC_API_BASE=http://localhost:8000
+# Frontend (Nuxt). start_servers.sh points it at the backend it starts unless you set it.
+# NUXT_PUBLIC_API_BASE=http://localhost:8000
 
-# Ports used by start_servers.sh
-BACKEND_PORT=8000
-FRONTEND_PORT=3000
+# Ports for start_servers.sh. Unset, it uses 8000/3000 or the next free ports; set, the port must be free.
+# BACKEND_PORT=8000
+# FRONTEND_PORT=3000
 """
 
 
@@ -164,7 +225,8 @@ chmod +x start_servers.sh   # if your unzip tool dropped the executable bit
 - Backend API: http://localhost:8000/api/
 
 The script creates `backend/.venv`, installs Python and npm dependencies, applies migrations
-(SQLite by default) and starts both servers. Press Ctrl+C to stop them.
+(SQLite by default) and starts both servers. If port 8000 or 3000 is busy it uses the next free
+port and prints the URLs it chose. Press Ctrl+C to stop them.
 
 ## Configuration
 
