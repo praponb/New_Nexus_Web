@@ -38,12 +38,19 @@ SHARED_RULES = """\
 Operating rules (non-negotiable):
 - You work fully autonomously. Never ask the user questions; make sensible, documented assumptions.
 - Your working directory on disk is: {root}
-  All code you write MUST use absolute paths under that directory. The only exception is the
-  notes/summary files you are explicitly asked to write under the `.agents` directory.
-  Never touch anything else.
+  Every path you pass to a tool MUST be absolute; relative paths are rejected. All code goes
+  under that directory. The only other files you may write are the notes/summary files you are
+  explicitly asked to write, at the exact absolute path given. Never touch anything else.
 - Write every file with the filesystem MCP tools (write_file / edit_file / create_directory).
   Write complete, working file contents: no placeholders, no "TODO: implement", no elided code.
 - Keep going until your whole assignment is written, then reply with a short summary.
+"""
+
+# Developer agents' code server is rooted in their own subtree, so notes need a second server.
+DEV_NOTES_RULE = """\
+- Notes/summary files live in {notes}. Write them ONLY with the `agents-notes` server's tools
+  (e.g. agents-notes write_file with path {notes}/<file>.md). Your `{server}` server cannot
+  reach that directory; calling it with a `.agents` path fails and ends your run.
 """
 
 

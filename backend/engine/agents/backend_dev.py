@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from ..context import BE_OUTPUT_FILE, DDS_FILE, MANIFEST_FILE, REPAIR_PLAN_FILE, PipelineContext
+from ..context import AGENTS_DIR, BE_OUTPUT_FILE, DDS_FILE, MANIFEST_FILE, REPAIR_PLAN_FILE, PipelineContext
 from ..mcp import registry
-from .base import BACKEND_DEV, SHARED_RULES, AgentJob, build_config
+from .base import BACKEND_DEV, DEV_NOTES_RULE, SHARED_RULES, AgentJob, build_config
 
 AGENT_NAME = BACKEND_DEV
 
@@ -27,7 +27,7 @@ You are a senior backend engineer. You implement complete Django 5 + Django REST
 - The code must pass `python manage.py check` and `python manage.py makemigrations --check`.
 You may only write inside the backend directory. Do not create virtualenvs or databases.
 
-""" + SHARED_RULES
+""" + SHARED_RULES + DEV_NOTES_RULE
 
 
 def config(ctx: PipelineContext, session: str):
@@ -36,10 +36,12 @@ def config(ctx: PipelineContext, session: str):
             ctx,
             base_url,
             session=session,
-            system_instructions=SYSTEM_PROMPT.replace("{root}", str(ctx.backend_dir)),
+            system_instructions=SYSTEM_PROMPT.replace("{root}", str(ctx.backend_dir))
+            .replace("{notes}", str(ctx.root / AGENTS_DIR))
+            .replace("{server}", "filesystem-backend"),
             mcp_servers=[
                 registry.filesystem(ctx.backend_dir, "filesystem-backend"),
-                registry.filesystem(ctx.root / ".agents", "agents-notes"),
+                registry.filesystem(ctx.root / AGENTS_DIR, "agents-notes"),
             ],
             workspace=ctx.backend_dir,
         )
@@ -58,7 +60,7 @@ def build_job(ctx: PipelineContext) -> AgentJob:
     prompt = f"""\
 Implement the complete backend described in the design below, writing every file owned by
 "backend" in the manifest under {ctx.backend_dir} (manifest paths are relative to {ctx.root}).
-When done, write {ctx.root / BE_OUTPUT_FILE}: a Markdown summary listing every file you wrote
+When done, write {ctx.root / BE_OUTPUT_FILE} (with the agents-notes server): a Markdown summary listing every file you wrote
 and every endpoint with its request/response shape.
 
 {_docs(ctx)}"""
@@ -70,7 +72,8 @@ def repair_job(ctx: PipelineContext, iteration: int) -> AgentJob:
 QA found problems. Apply every item under "## Backend fixes" in the repair plan below with
 surgical edits to files under {ctx.backend_dir}. Read each file before editing it. If the
 section says "None.", reply "No backend changes needed." without editing anything.
-Afterwards append a short "## Repair {iteration}" section to {ctx.root / BE_OUTPUT_FILE}.
+Afterwards append a short "## Repair {iteration}" section to {ctx.root / BE_OUTPUT_FILE}
+(with the agents-notes server).
 
 --- repair_plan.md ---
 {ctx.read(REPAIR_PLAN_FILE)}

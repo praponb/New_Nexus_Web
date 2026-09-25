@@ -15,7 +15,7 @@ from engine.agents.base import AgentJob
 from engine.llm_relay import LLMRelay
 from engine.mock_engine import FAULT_FILE, MockAgentRunner
 from engine.packager import zipper
-from engine.runner import LiveAgentRunner, StreamPump, is_retryable
+from engine.runner import RETRY_PREAMBLE, LiveAgentRunner, StreamPump, is_retryable
 
 REQUIREMENT = "# Todo\n\nBuild a todo app where users add, edit, complete and delete tasks with due dates and filters."
 
@@ -263,12 +263,14 @@ def test_is_retryable():
     assert is_retryable(RuntimeError("HTTP 429 Too Many Requests"))
     assert is_retryable(RuntimeError("RESOURCE_EXHAUSTED: quota"))
     assert is_retryable(type("ConnectionClosedOK", (Exception,), {})("bye"))
+    harness_drop = type("AntigravityConnectionError", (Exception,), {})
+    assert is_retryable(harness_drop("Harness process exited unexpectedly (WS close code 1006)."))
     assert not is_retryable(ValueError("bad prompt"))
     assert not is_retryable(asyncio.TimeoutError())
 
 
 async def test_live_runner_uses_fresh_agent_per_retry(tmp_path, monkeypatch):
-    created = []
+    created, prompts = [], []
 
     class FakeResponse:
         def __init__(self, fail):
@@ -295,6 +297,7 @@ async def test_live_runner_uses_fresh_agent_per_retry(tmp_path, monkeypatch):
             return False
 
         async def chat(self, prompt):
+            prompts.append(prompt)
             return FakeResponse(fail=len(created) == 1)
 
     monkeypatch.setattr("engine.runner.Agent", FakeAgent)
@@ -305,6 +308,7 @@ async def test_live_runner_uses_fresh_agent_per_retry(tmp_path, monkeypatch):
     assert len(created) == 2 and created[0] is not created[1]
     assert created[0].config["base_url"].startswith("http://127.0.0.1:")
     assert any("Retrying with a fresh agent" in entry[2] for entry in sink.logs)
+    assert prompts[0] == "go" and prompts[1].startswith(RETRY_PREAMBLE) and prompts[1].endswith("go")
 
 
 # --------------------------------------------------------------------------- sandbox policy
@@ -349,6 +353,11 @@ def test_build_config_scopes_tools(tmp_path):
     assert config.policies[0].name == "nexus-sandbox"
     assert [s.name for s in config.mcp_servers] == ["filesystem-backend", "agents-notes"]
     assert config.workspaces == [str((ctx.root / "backend").resolve())]
+    # Notes must go through agents-notes with absolute paths (a relative `.agents` path sent to
+    # filesystem-backend is denied and crashed a live run).
+    assert "{" not in config.system_instructions.split("Operating rules")[1]
+    assert f"path {ctx.root / '.agents'}/<file>.md" in config.system_instructions
+    assert "Your `filesystem-backend` server cannot" in config.system_instructions
 
 
 def test_nested_agent_notes_are_collected_and_never_zipped(tmp_path):

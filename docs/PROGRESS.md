@@ -1,7 +1,7 @@
 # Nexus: Implementation Progress & Handoff
 
 > **Resuming in a new session?** Read this file first, then `docs/IMPLEMENTATION_PLAN.md` (the approved plan) and `NEXUS_DESIGN_DOCUMENT.md` (the spec).
-> Last updated: 2026-09-25, ALL 7 PHASES DONE; live acceptance passed.
+> Last updated: 2026-09-25 (session 2). All 7 phases are done and live acceptance passed once. See **Resume here** for the failed second live run and its fix.
 
 ## Decisions made by the user (do not re-ask)
 | Topic | Decision |
@@ -142,10 +142,21 @@
 - [x] Download: a valid zip with `.env.example` and an executable `start_servers.sh`, SHA256 verified (script and API). The browser button was not clicked, to avoid downloading files.
 - [x] Clean startup: `./start_servers.sh` served 200s for both the mock and the live archives.
 
+## Resume here (2026-09-25, second session)
+- **The second live run (project `e39016e8-…`) FAILED on its own, before the restart**, at 25% in the Frontend Dev agent:
+  - The agent wrote every frontend file, then called `filesystem-frontend.create_directory(".agents")`. That server is rooted at `generated/frontend`, so the call was denied (the notes are only reachable via `agents-notes`).
+  - The harness then dropped its WebSocket (close 1006). `is_retryable` didn't match `AntigravityConnectionError`, so the whole pipeline failed.
+  - Root cause: the old `SHARED_RULES` wording ("the only exception is the notes files under the `.agents` directory") read as allowing a relative path.
+- **Fixed (uncommitted):**
+  1. `SHARED_RULES`: every tool path must be absolute.
+  2. New `DEV_NOTES_RULE` in `agents/base.py`, used by both dev agents: write notes only via `agents-notes` at `{root}/.agents/<file>.md`. Task prompts name the server too.
+  3. `runner.py`: "harness process exited unexpectedly" is retryable. Attempts after the first prepend `RETRY_PREAMBLE` ("finish the files already on disk; don't start over").
+  4. Tests extended. **57/57 pass.**
+- **Next:** re-run `./scripts/test_agent_pipeline.sh --mode live`. This spends Moonshot credits, so confirm with the user first.
+
 ## Possible follow-ups
-- Re-run `./scripts/test_agent_pipeline.sh --mode live` after the environment-scrub and notes fixes.
 - QA `run_command` is prompt-constrained only; there is no OS sandbox on macOS.
-- No git commits yet: everything is untracked on `master`.
+- Git: commits `eefcfec` and `3f5a9ed` are on `main` and `b_pbv_main` (pushed to the private origin). The fixes above are not committed yet.
 
 ## Where everything is
 - Approved plan: `docs/IMPLEMENTATION_PLAN.md` (a copy of `~/.claude/plans/pasted-content-id-cf92-please-read-rosy-pixel.md`).
