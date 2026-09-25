@@ -339,4 +339,3 @@ Status: ✅ fixed · 🔧 workaround · ⚠️ open.
 
 - ⚠️ **QA sandbox:** the QA agent's `run_command` is limited only by its prompt, with no OS sandbox on macOS. That's fine on your own machine, but must be solved before offering Nexus to other users.
 - ⚠️ **Not yet seen live:** the stall fail-over (P4) and the design consistency review (P6). Watch the next generation for a `## Consistency review` section in `.agents/dds_output.md` and any "Design check" message.
-- 🔧 **Test data:** run `scripts/cleanup_test_data.py --yes` to remove the e2e test users and about 4.5 GB of old workspaces.
