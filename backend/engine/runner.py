@@ -29,6 +29,10 @@ RETRYABLE_MARKERS = (
     "connection closed",
     "server disconnected",
     "harness process exited unexpectedly",  # the harness dropped its WebSocket mid-turn (close 1006)
+    "unexpected eof",  # the model API reset a streaming response mid-turn
+    "network issue",
+    "connection reset",
+    "payload is not completed",
 )
 RETRY_PREAMBLE = """\
 Note: a previous attempt at this task was interrupted by a connection failure. Files it wrote may

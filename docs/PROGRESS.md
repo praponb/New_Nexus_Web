@@ -147,7 +147,7 @@
   - The agent wrote every frontend file, then called `filesystem-frontend.create_directory(".agents")`. That server is rooted at `generated/frontend`, so the call was denied (the notes are only reachable via `agents-notes`).
   - The harness then dropped its WebSocket (close 1006). `is_retryable` didn't match `AntigravityConnectionError`, so the whole pipeline failed.
   - Root cause: the old `SHARED_RULES` wording ("the only exception is the notes files under the `.agents` directory") read as allowing a relative path.
-- **Fixed (commit `739e126` on `b_pbv_main`, not pushed):**
+- **Fixed (commit `739e126`, in PR #1):**
   1. `SHARED_RULES`: every tool path must be absolute.
   2. New `DEV_NOTES_RULE` in `agents/base.py`, used by both dev agents: write notes only via `agents-notes` at `{root}/.agents/<file>.md`. Task prompts name the server too.
   3. `runner.py`: "harness process exited unexpectedly" is retryable. Attempts after the first prepend `RETRY_PREAMBLE` ("finish the files already on disk; don't start over").
@@ -164,15 +164,20 @@
   - `server-filesystem` implements the MCP roots protocol. When the client advertises roots, it REPLACES its command-line directories with them.
   - The harness advertises each agent's `workspaces` as roots. Dev agents had `workspaces=[<side>_dir]`, so every filesystem server (including `agents-notes`) was re-rooted to that subtree.
   - Proven over stdio: CLI dirs `[frontend, .agents]` with client roots `[frontend]` produced the identical denial; with roots `[frontend, .agents]` the write succeeded.
-- **Fix 3 (uncommitted; supersedes fix 2's two-root server, which is reverted):**
+- **Fix 3 (commit `b1d2a92`, in PR #1; supersedes fix 2's two-root server, which is reverted):**
   - `build_config` adds `generated/.agents` to `workspaces` whenever the agent's workspace is a subtree that doesn't contain it. The view_file sandbox uses the same list.
   - The registry docstring documents the roots override.
   - `_collect_stray_notes` still handles the top-level fallback notes. 57/57 tests pass.
-- **Next:** check run 4's result (it runs pre-fix-3 code, so expect the notes fallback again), commit fixes 2 and 3, and optionally run live once more to confirm the notes land in `.agents/` (credits: ask first).
+- **Run 4 result: FAILED in QA loop 1** with `AntigravityExecutionError: unexpected EOF`.
+  - The QA agent viewed a full-page Playwright screenshot. Its next model request hung for about 9.5 minutes, then Moonshot reset the streaming connection (`ClientPayloadError`, `ConnectionResetError`, logged in `llm_relay._forward`). The harness itself said "network issue… please try again".
+  - Up to that point, the backend and UI checks were passing.
+  - As expected for pre-fix-3 code, the dev agents' notes writes were denied. This time both agents put their summaries inline instead of writing fallback files.
+- **Fix 4 (uncommitted):** `RETRYABLE_MARKERS` gains "unexpected eof", "network issue", "connection reset" and "payload is not completed". 57/57 tests pass.
+- **Next:** commit fix 4 to the PR branch, then do one live run to confirm fixes 3 and 4 (credits: ask first).
 
 ## Possible follow-ups
 - QA `run_command` is prompt-constrained only; there is no OS sandbox on macOS.
-- Git: commits `eefcfec` and `3f5a9ed` are on `main` and `b_pbv_main` (pushed to the private origin). The fix commit `739e126` is local only.
+- Git: commits `eefcfec` and `3f5a9ed` are on `main` and `b_pbv_main` (pushed to the private origin). Fix commits `739e126` and `b1d2a92` are pushed on `b_pbv_main`; PR #1 (https://github.com/praponb/New_Nexus_Web/pull/1) merges them into `main`.
 
 ## Where everything is
 - Approved plan: `docs/IMPLEMENTATION_PLAN.md` (a copy of `~/.claude/plans/pasted-content-id-cf92-please-read-rosy-pixel.md`).

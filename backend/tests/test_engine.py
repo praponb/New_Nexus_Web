@@ -265,6 +265,8 @@ def test_is_retryable():
     assert is_retryable(type("ConnectionClosedOK", (Exception,), {})("bye"))
     harness_drop = type("AntigravityConnectionError", (Exception,), {})
     assert is_retryable(harness_drop("Harness process exited unexpectedly (WS close code 1006)."))
+    execution_error = type("AntigravityExecutionError", (Exception,), {})
+    assert is_retryable(execution_error("unexpected EOF: unexpected EOF"))  # upstream stream reset
     assert not is_retryable(ValueError("bad prompt"))
     assert not is_retryable(asyncio.TimeoutError())
 
