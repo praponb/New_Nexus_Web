@@ -17,7 +17,7 @@ from pathlib import Path
 from apps.projects.models import LogType
 
 from .agents.base import QA_TESTER
-from .context import MANIFEST_FILE, PipelineContext
+from .context import DDS_FILE, MANIFEST_FILE, PipelineContext
 
 REQUIRED_FILES = [
     "backend/manage.py",
@@ -100,6 +100,57 @@ def _manifest_paths(ctx: PipelineContext) -> tuple[list[str], str | None]:
         if isinstance(path, str) and path.strip():
             paths.append(path.strip().lstrip("./"))
     return paths, None
+
+
+HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
+FILE_OWNERS = {"frontend", "backend"}
+
+
+def design_warnings(ctx: PipelineContext) -> list[str]:
+    """Structural checks on the Team Lead's documents, run right after planning.
+
+    Semantic contradictions (e.g. a status transition an endpoint needs but the table forbids) are
+    the Team Lead's own consistency review; this only catches what code can see cheaply.
+    """
+    warnings: list[str] = []
+    if "## Consistency review" not in ctx.read(DDS_FILE):
+        warnings.append('dds_output.md has no "## Consistency review" section')
+    raw = ctx.read(MANIFEST_FILE)
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return warnings + [f"manifest.json is not valid JSON: {exc}"]
+    if not isinstance(data, dict):
+        return warnings + ["manifest.json is not a JSON object"]
+
+    files = [f for f in data.get("files") or [] if isinstance(f, dict)]
+    paths = [str(f.get("path", "")).strip().lstrip("./") for f in files]
+    if not paths:
+        warnings.append('manifest.json lists no "files"')
+    seen: set[str] = set()
+    for item, path in zip(files, paths):
+        if path in seen:
+            warnings.append(f"file listed twice: {path}")
+        seen.add(path)
+        owner = item.get("owner")
+        if owner not in FILE_OWNERS:
+            warnings.append(f"{path}: owner {owner!r} is not frontend/backend")
+        elif not path.startswith(f"{owner}/"):
+            warnings.append(f"{path}: owner {owner!r} does not match its directory")
+    for page in data.get("pages") or []:
+        page_file = str(page.get("file", "")).strip().lstrip("./") if isinstance(page, dict) else ""
+        if page_file and page_file not in seen:
+            warnings.append(f"page file not in the file list: {page_file}")
+    for endpoint in data.get("api_endpoints") or []:
+        if not isinstance(endpoint, dict):
+            continue
+        method = str(endpoint.get("method", "")).upper()
+        path = str(endpoint.get("path", "")).split("?")[0]
+        if method not in HTTP_METHODS:
+            warnings.append(f"endpoint {path or '?'}: unknown method {endpoint.get('method')!r}")
+        if path != "/" and not (path.startswith("/api/") and path.endswith("/")):  # "/" = health check
+            warnings.append(f"endpoint {method} {path}: should be under /api/ with a trailing slash")
+    return warnings
 
 
 async def run_checks(ctx: PipelineContext) -> CheckReport:

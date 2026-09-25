@@ -218,11 +218,14 @@
   - Merged into `main`: PR #1 (`0501e32`), PR #2 (`78913cd`), PR #3 (`3456bc7`) and PR #4 (`d39da24`, fixes 6–9).
 - **Dev stack:** restarted by the user at 17:58 (after fixes 8–9). It was verified as a single `start_dev.sh`, Daphne :8000, one Celery worker ("ready") and Nuxt :3000.
 - **Login/register:** the user registered (`prapon@gmail.com`) and logged in through the browser UI themselves. My browser rules forbid me typing passwords.
+- **Fix 10: design consistency review** (for run 6's F1, a DDS self-contradiction found only in QA loop 3):
+  - `architect.plan_job` adds a mandatory step 3. The Team Lead re-reads both documents against `CONSISTENCY_CHECKLIST` (state machines vs. every status-changing action, fields vs. model, UI actions vs. endpoints, errors vs. acceptance checks, manifest vs. DDS), fixes contradictions in place, and appends `## Consistency review` to the DDS. `repair_job` re-checks any design parts it patches. No extra agent run.
+  - `checks.design_warnings`, called by `orchestrator.plan`, emits an advisory SYSTEM log "Design check: N warning(s)". It flags a missing review section, invalid manifest JSON, duplicate files, an owner/directory mismatch, page files missing from `files`, and endpoints not under `/api/…/` (the `/` health check is exempt). The run is never failed.
+  - Checked on real designs from runs 3, 5 and 6: the only warning is the (expected) missing review section. The mock DDS includes the section. **66/66 pass.** Not yet exercised live.
 - **Open items:**
   - The live fail-over after a stalled or reset model stream (fixes 4–5) is covered only by unit tests; a real stall can't be triggered on demand.
   - QA `run_command` is prompt-constrained only; there is no OS sandbox on macOS.
-  - Idea: add a consistency check of the Team Lead's DDS, e.g. state-transition tables vs. endpoint specs. Run 6's last bug (F1) was a self-contradiction in the DDS that surfaced only in QA loop 3.
-  - Housekeeping: old acceptance-run workspaces in `media/workspaces/` and `e2e-*@example.com` test users.
+  - Housekeeping (not done; my deletion was blocked by the permission system): 8 `e2e-*@example.com` users with their projects and workspaces, 4 older test accounts (`smoke14225`, `celery-smoke`, `ws4045`, `ui-demo7896`), 4.5 GB in `media/workspaces/`, and kept e2e logs in `$TMPDIR/nexus-e2e-*`.
 
 ## Possible follow-ups
 - QA `run_command` is prompt-constrained only; there is no OS sandbox on macOS.
