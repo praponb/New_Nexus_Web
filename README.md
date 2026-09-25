@@ -7,7 +7,7 @@ Nexus turns a `user_requirement.md` into a working full-stack web application (D
 3. **QA** runs real checks and browser tests in a self-correcting loop (up to 3 repair cycles).
 4. The **packager** zips the result, adding `start_servers.sh`, `README.md` and `.env.example`.
 
-The spec is `NEXUS_DESIGN_DOCUMENT.md`. Implementation notes are in `docs/`.
+The spec is `NEXUS_DESIGN_DOCUMENT.md`. Implementation notes are in `docs/`. For day-to-day commands and known problems with their fixes, see **[user_guide.md](user_guide.md)**.
 
 ## Architecture
 
