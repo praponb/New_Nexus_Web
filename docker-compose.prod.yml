@@ -1,0 +1,93 @@
+# ---------------------------------------------------------------------------
+# Nexus production stack (Ubuntu server, https://nexus.praponb.com).
+#   docker compose -f docker-compose.prod.yml up -d --build
+# Secrets and settings come from .env.prod (copy .env.prod.example). The only host port is the
+# frontend on 127.0.0.1:8090; the host's cloudflared tunnel routes nexus.praponb.com to it.
+# The dev stack keeps using docker-compose.yml + scripts/start_dev.sh.
+# ---------------------------------------------------------------------------
+name: nexus
+
+x-backend: &backend
+  build:
+    context: .
+    dockerfile: deploy/backend.Dockerfile
+  image: nexus-backend:latest
+  env_file: .env.prod
+  restart: unless-stopped
+  volumes:
+    - media:/app/media
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: .env.prod
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  web:
+    <<: *backend
+    volumes:
+      - media:/app/media
+      - static:/app/static
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  worker:
+    <<: *backend
+    command: ["python", "-m", "celery", "-A", "engine.celery_app", "worker", "-Q", "nexus", "--loglevel=INFO", "--concurrency=2", "--pool=threads"]
+    # Generated apps' QA (npm install, nuxi build, Chromium) runs here; cap it so it can't starve
+    # the other apps on the server. Long runs get time to finish their current step on stop.
+    stop_grace_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 6g
+
+  frontend:
+    build:
+      context: .
+      dockerfile: deploy/frontend.Dockerfile
+      args:
+        NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE:-https://nexus.praponb.com}
+        NUXT_PUBLIC_WS_BASE: ${NUXT_PUBLIC_WS_BASE:-wss://nexus.praponb.com}
+    image: nexus-frontend:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8090:80"
+    volumes:
+      - static:/srv/static:ro
+    depends_on:
+      - web
+
+volumes:
+  pgdata:
+  redisdata:
+  media:
+  static:

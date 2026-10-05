@@ -1,0 +1,20 @@
+# Keep secrets, runtime data and local builds out of the Docker build context.
+.git
+.env
+.env.*
+.venv
+venv
+**/__pycache__
+**/.pytest_cache
+media
+static
+logs
+*.log
+*.zip
+frontend/node_modules
+frontend/.nuxt
+frontend/.output
+frontend/.data
+frontend/.cache
+.claude
+docs
