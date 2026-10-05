@@ -38,6 +38,17 @@ Requirements: Docker Desktop, [uv](https://docs.astral.sh/uv/) or Python 3.12, a
 
 Open http://localhost:3000, create an account, create a project, upload or write the requirement, and press **Start Autonomous Generation**.
 
+## Production
+
+Nexus runs in Docker on the Ubuntu server 192.168.1.49 and is published at **https://nexus.praponb.com**. The route is the server's Cloudflare Tunnel plus Cloudflare Access.
+
+```bash
+cp .env.prod.example .env.prod      # fill in the secrets, then: chmod 600 .env.prod
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+The stack: postgres, redis, `web` (Daphne), `worker` (Celery with Python, Node and Chromium for QA), and `frontend` (nginx serving the generated SPA, proxying `/api/` and `/ws/`). It's on `127.0.0.1:8090` only. The files are in `deploy/`; day-to-day operation is in `user_guide.md` section 11.
+
 ## Tests
 
 ```bash
@@ -57,5 +68,6 @@ cd frontend && npx nuxi typecheck && npm run build
 ```
 backend/   nexus_backend/ (settings, asgi, api envelope) · apps/{accounts,projects,realtime} · engine/ · tests/
 frontend/  pages/ · components/{ui,dashboard,requirement,generation,delivery} · composables/ · stores/
+deploy/    backend + frontend Dockerfiles · nginx.conf · entrypoint-web.sh (used by docker-compose.prod.yml)
 scripts/   setup_environment.sh · start_dev.sh · test_agent_pipeline.sh · ws_watch.py · fixtures/
 ```

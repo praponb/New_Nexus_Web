@@ -1,7 +1,7 @@
 # Nexus: Implementation Progress & Handoff
 
 > **Resuming in a new session?** Read this file first, then `docs/IMPLEMENTATION_PLAN.md` (the approved plan) and `NEXUS_DESIGN_DOCUMENT.md` (the spec).
-> Last updated: 2026-09-25 (session 2, evening). All 7 phases are done. Live acceptance passed on runs 1, 3 and 5. Run 6 failed at QA loop 3 and was then completed live through "Continue repair". Everything is merged into `main` (PRs #1–#4). See **Resume here**.
+> Last updated: 2026-10-05. All 7 phases are done, and Nexus is deployed to production at https://nexus.praponb.com (Docker on the Ubuntu server 192.168.1.49; PRs #10–#11). Everything is merged into `main` (PRs #1–#11, `aaa1d1d`). See **Resume here**.
 
 ## Decisions made by the user (do not re-ask)
 | Topic | Decision |
@@ -142,7 +142,32 @@
 - [x] Download: a valid zip with `.env.example` and an executable `start_servers.sh`, SHA256 verified (script and API). **Browser button tested in session 2** (with the user's approval): `nexus_project_team-task-tracker.zip` reached `~/Downloads` with a matching SHA256.
 - [x] Clean startup: `./start_servers.sh` served 200s for both the mock and the live archives.
 
-## Resume here (2026-09-25, second session)
+## Resume here (2026-10-05, production deployment)
+- **Deployed:** https://nexus.praponb.com.
+  - Server 192.168.1.49 (Ubuntu 26.04, `ssh prapon@`, key login; sudo needs a password, so the user runs sudo steps). Compose project `nexus` in `~/nexus`.
+  - Services: `postgres`, `redis`, `web`, `worker`, `frontend`. The only host port is `127.0.0.1:8090`.
+  - The server also runs inventory (:8000/:3000), twin, sql2pyspark, batch2stream and ollama. Don't touch them.
+- **Routing:**
+  - The host systemd `cloudflared` (tunnel `4fc26704-4a77-4a7e-a7bc-30861b3802cb`, `/etc/cloudflared/config.yml`) has the rule `nexus.praponb.com → http://localhost:8090`.
+  - DNS is a proxied CNAME `nexus` → `<tunnel>.cfargotunnel.com`.
+  - Cloudflare Access (email PIN, prapon@gmail.com) sits in front. Claude can't get past Access, so do public checks from the server (`curl -H "Host: nexus.praponb.com" http://127.0.0.1:8090/...`).
+- **Repo (PR #10 `27ed6ac`, PR #11 `aaa1d1d`):**
+  - `docker-compose.prod.yml`, `deploy/` (backend image with Python 3.12, Node 20 and Playwright Chromium; `entrypoint-web.sh`; frontend `nuxt generate` + nginx), `.env.prod.example`, `.dockerignore`.
+  - `settings.py`: `CSRF_TRUSTED_ORIGINS`, `SECURE_PROXY_SSL_HEADER`, `USE_X_FORWARDED_HOST`, and secure cookies when `DEBUG` is off.
+  - nginx resolves `web` through Docker DNS (D1), and `absolute_redirect off` (D2).
+- **Verified:**
+  - 66/66 tests pass in the image.
+  - Mock e2e through nginx: register → generate → WebSocket `pipeline_complete` → download, SHA ok.
+  - The user logged in through the public URL and browsed Asset Inventory.
+- **Data:**
+  - The Mac DB was `pg_restore`d onto the server: prapon@gmail.com, Asset Inventory `8c50ba26`, 2,441 logs.
+  - `workspace_dir` was rewritten to `/app/media/...`.
+  - `media/` was copied into the `nexus_media` volume without the Mac-built caches.
+- **Secrets:** `~/nexus/.env.prod` (mode 600) has a new `DJANGO_SECRET_KEY` and `POSTGRES_PASSWORD`, and the Moonshot key copied from the Mac `.env`. The engine is still in **mock** mode.
+- **Open (user's choice, not urgent):** user_guide.md section 10 items 1–3 (live mode, server cleanup, git checkout on the server). The Mac `.venv` is missing; re-run `setup_environment.sh`.
+- Problems found: user_guide.md D1–D4. D4 is the home Pi-hole (192.168.1.36) caching NXDOMAIN for a new hostname.
+
+## Session log (2026-09-25, second session)
 - **The second live run (project `e39016e8-…`) FAILED on its own, before the restart**, at 25% in the Frontend Dev agent:
   - The agent wrote every frontend file, then called `filesystem-frontend.create_directory(".agents")`. That server is rooted at `generated/frontend`, so the call was denied (the notes are only reachable via `agents-notes`).
   - The harness then dropped its WebSocket (close 1006). `is_retryable` didn't match `AntigravityConnectionError`, so the whole pipeline failed.
@@ -229,7 +254,7 @@
 
 ## Possible follow-ups
 - QA `run_command` is prompt-constrained only; there is no OS sandbox on macOS.
-- Git: all work is merged into `main` on the private origin through PRs #1–#7 (https://github.com/praponb/New_Nexus_Web/pulls?q=is%3Apr). `b_pbv_main` is kept as the working branch.
+- Git: all work is merged into `main` on the private origin through PRs #1–#11 (https://github.com/praponb/New_Nexus_Web/pulls?q=is%3Apr). `b_pbv_main` is kept as the working branch.
 
 ## Where everything is
 - Approved plan: `docs/IMPLEMENTATION_PLAN.md` (a copy of `~/.claude/plans/pasted-content-id-cf92-please-read-rosy-pixel.md`).
