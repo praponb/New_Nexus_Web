@@ -410,3 +410,19 @@ Changing `.env.prod` needs `up -d` (not `restart`) so the containers pick up the
 docker compose -f docker-compose.prod.yml exec -T postgres pg_dump -U nexus -Fc nexus > nexus-$(date +%F).dump
 docker run --rm -v nexus_media:/m -v "$PWD":/b alpine tar czf /b/nexus-media-$(date +%F).tgz -C /m .
 ```
+
+### Data copied from the Mac (2026-10-05)
+- `pg_dump -Fc` of the Mac DB was restored with `pg_restore --clean --if-exists --no-owner`. It brought prapon@gmail.com, the Asset Inventory project (`8c50ba26`) and 2,441 log rows.
+- `media/` was copied into the `nexus_media` volume, owned by uid 1000, **without** the macOS-built caches (`node_modules`, `.qa/venv`, `.qa/npm-cache`, `.nuxt`, `.output`). Nexus rebuilds those on Linux when needed.
+- `Project.workspace_dir` stores an absolute path, so it was rewritten after the restore:
+  `update projects_project set workspace_dir = replace(workspace_dir, '/Users/praponb/GitHub/New_Nexus_Web/media', '/app/media');`
+- The restore replaced the two `e2e-deploy-…@example.com` smoke-test users. Their workspace `nexus_media:/workspaces/cfa725f7-…` is now orphaned and can be removed.
+
+### Production problems
+**D1 ✅ The site returns 502 after `web` is recreated.** nginx resolved `web` once at startup and kept the old container IP. Fix: `deploy/nginx.conf` now resolves `web` through Docker DNS (`resolver 127.0.0.11`, `proxy_pass $backend`).
+
+**D2 ✅ Page paths without a trailing slash redirected to `http://`.** nginx only sees plain HTTP behind the tunnel, so its absolute redirects used `http://nexus.praponb.com/...`. Fix: `absolute_redirect off;` sends relative `Location` headers.
+
+**D3 🔧 `sudo systemctl restart cloudflared` takes ~90 s** and takes every tunnel site offline meanwhile (see step 4 above).
+
+**D4 🔧 The browser says `DNS_PROBE_FINISHED_NXDOMAIN` for a new hostname.** The home Pi-hole (192.168.1.36) cached the "doesn't exist" answer from before the record was created (Cloudflare's negative TTL is 30 min). Fix: Pi-hole → Tools → Restart DNS resolver (or `pihole restartdns`), `sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder` on the Mac, and `chrome://net-internals/#dns` → Clear host cache.
