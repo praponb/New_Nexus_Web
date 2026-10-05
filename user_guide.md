@@ -1,7 +1,7 @@
 # Nexus User Guide
 
 A practical handbook for running, testing and maintaining Nexus: the important commands, how to use
-the app, and every known problem found so far (as of 2026-09-25), with its cause and solution.
+the app, and every known problem found so far (as of 2026-10-05), with its cause and solution.
 
 > Paths are relative to the repo root, `/Users/praponb/GitHub/New_Nexus_Web`, unless noted.
 > Deep implementation notes and the full run history are in `docs/PROGRESS.md`.
@@ -358,11 +358,20 @@ Runs 1–5 belonged to throwaway `e2e-…` users, so the cleanup deleted their p
 
 ## 10. Open items / limitations
 
-Status at the end of 2026-09-25: all work is merged into `main` (PRs #1–#9), the dev stack was restarted at 18:39 on the latest engine code, and the test data is cleaned up. Nothing is waiting on you.
+Status at the end of 2026-10-05: Nexus is deployed at **https://nexus.praponb.com** (section 11) and all work is merged into `main` (PRs #1–#11, `aaa1d1d`). Your data was copied to the server, and you logged in there and browsed Asset Inventory. Nothing is broken or waiting.
 
-- ⚠️ **QA sandbox:** the QA agent's `run_command` is limited only by its prompt, with no OS sandbox on macOS. That's fine on your own machine, but must be solved before offering Nexus to other users.
-- ⚠️ **Not yet seen live:** the stall fail-over (P4) and the design consistency review (P6). Watch the next generation for a `## Consistency review` section in `.agents/dds_output.md` and any "Design check" message.
-- Optional: remove the four older test accounts with `.venv/bin/python scripts/cleanup_test_data.py --yes --include-old-test-accounts`.
+Your choices, postponed to a later session:
+1. **Switch production to live mode:** set `NEXUS_ENGINE_MODE=live` in `~/nexus/.env.prod`, then `docker compose -f docker-compose.prod.yml up -d web worker`. Generations then spend Moonshot credits.
+2. **Server cleanup (optional):** `~/nexus/media-import/`, `~/nexus/media-import.dump`, and the orphan smoke-test workspace `workspaces/cfa725f7-…` in the `nexus_media` volume.
+3. **Make `~/nexus` a git checkout (optional):** it needs a read-only GitHub deploy key, since the repo is private. Until then, `~/nexus` is an rsync copy of the repo matching `main` `aaa1d1d`, and updates are rsync + `up -d --build`.
+
+On the Mac:
+- The repo's **`.venv` is missing**, so `start_dev.sh` and the pytest commands fail until you run `./scripts/setup_environment.sh`. The tests also pass inside the production image (66/66 on 2026-10-05).
+- The Mac dev database now holds only prapon@gmail.com and Asset Inventory. The four old test accounts are gone, so `--include-old-test-accounts` has nothing left to do.
+
+Limitations:
+- ⚠️ **QA sandbox:** the QA agent's `run_command` is limited only by its prompt. In production it runs inside the `worker` container (non-root, 4 CPU / 6 GB cap, only the `media` volume mounted), which is better isolation than on macOS, but it is still not a real sandbox. Keep Cloudflare Access on, so only you can start generations.
+- ⚠️ **Not yet seen live:** the stall fail-over (P4) and the design consistency review (P6). Watch the next live generation for a `## Consistency review` section in `.agents/dds_output.md` and any "Design check" message.
 
 ---
 
