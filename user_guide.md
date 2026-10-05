@@ -22,6 +22,7 @@ the app, and every known problem found so far (as of 2026-09-25), with its cause
 | Generated projects | `media/workspaces/{user_id}/{project_id}/`: `generated/` (the app plus `.agents/` notes) and `packages/` (the zip) |
 | LLM | Moonshot `kimi-k3` (`https://api.moonshot.ai/v1`), key in `.env` → `MODEL_API_KEY` |
 | GitHub | https://github.com/praponb/New_Nexus_Web (private). Work on `b_pbv_main`, merge to `main` by PR |
+| Production | https://nexus.praponb.com: Docker on the Ubuntu server 192.168.1.49, `~/nexus` (see section 11) |
 
 **How a generation works:**
 1. The **Team Lead** writes the design (`.agents/dds_output.md` and `.agents/manifest.json`) and reviews it for contradictions.
@@ -362,3 +363,50 @@ Status at the end of 2026-09-25: all work is merged into `main` (PRs #1–#9), t
 - ⚠️ **QA sandbox:** the QA agent's `run_command` is limited only by its prompt, with no OS sandbox on macOS. That's fine on your own machine, but must be solved before offering Nexus to other users.
 - ⚠️ **Not yet seen live:** the stall fail-over (P4) and the design consistency review (P6). Watch the next generation for a `## Consistency review` section in `.agents/dds_output.md` and any "Design check" message.
 - Optional: remove the four older test accounts with `.venv/bin/python scripts/cleanup_test_data.py --yes --include-old-test-accounts`.
+
+---
+
+## 11. Production deployment (https://nexus.praponb.com)
+
+Nexus runs in Docker on the home Ubuntu server **192.168.1.49** (`ssh prapon@192.168.1.49`) in **`~/nexus`**, as the compose project `nexus` defined in `docker-compose.prod.yml`. The server also hosts other apps (inventory, twin, sql2pyspark, batch2stream, ollama); Nexus shares none of their ports or containers.
+
+| Piece | What it is |
+|---|---|
+| `frontend` | nginx (`deploy/frontend.Dockerfile`, `deploy/nginx.conf`): the generated Nuxt SPA, plus a proxy of `/api/`, `/admin/`, `/ws/` → `web`. The **only host port: `127.0.0.1:8090`** |
+| `web` | Daphne (`deploy/backend.Dockerfile`, `deploy/entrypoint-web.sh`): migrates and runs collectstatic on every start |
+| `worker` | Celery, same image (Python 3.12 + Node 20 + Playwright Chromium for QA). Capped at 4 CPUs / 6 GB |
+| `postgres`, `redis` | Internal only, with volumes `nexus_pgdata` and `nexus_redisdata` |
+| Volumes `nexus_media`, `nexus_static` | Workspaces, uploads, zips; Django admin assets |
+| Settings | `~/nexus/.env.prod` (mode 600; template `.env.prod.example`) |
+| Public URL | The host's systemd `cloudflared` (tunnel `4fc26704…`, `/etc/cloudflared/config.yml`) routes `nexus.praponb.com` → `http://localhost:8090`. Cloudflare provides HTTPS |
+
+### First-time setup (done 2026-10-05)
+1. Copy the code to `~/nexus` on the server. Create `.env.prod` from `.env.prod.example` with a new `DJANGO_SECRET_KEY` and `POSTGRES_PASSWORD`, then `chmod 600 .env.prod`.
+2. `docker compose -f docker-compose.prod.yml up -d --build`. The first build takes about 5 minutes, and the backend image is ~2.6 GB because of Node and Chromium.
+3. Check on the server: `curl http://127.0.0.1:8090/api/v1/auth/me/` → 401, `/api/v1/health/` → 200.
+4. Public route (needs sudo, so the user does it):
+   - add the rule below to `/etc/cloudflared/config.yml`, above the catch-all `- service: http_status:404`:
+     ```yaml
+     - hostname: nexus.praponb.com
+       service: http://localhost:8090
+     ```
+   - `sudo systemctl restart cloudflared`. It takes about **90 s**: the old process ignores SIGTERM until systemd kills it, and sql2pyspark, inventory and nexus are offline meanwhile. The command returns only when the restart is done. Check with `systemctl is-active cloudflared`.
+   - in the Cloudflare dashboard, add a DNS CNAME `nexus` → `4fc26704-4a77-4a7e-a7bc-30861b3802cb.cfargotunnel.com` (proxied).
+5. ✅ Done 2026-10-05: Cloudflare Access (Zero Trust → Access → Applications, email one-time PIN) in front of `nexus.praponb.com`. Otherwise anyone can register, spend Moonshot credits, and run generated code on the server.
+
+### Everyday commands (on the server, in `~/nexus`)
+```bash
+docker compose -f docker-compose.prod.yml ps                        # status / health
+docker compose -f docker-compose.prod.yml logs -f --tail 100 web worker
+docker compose -f docker-compose.prod.yml restart worker
+docker compose -f docker-compose.prod.yml up -d --build             # after code changes
+docker compose -f docker-compose.prod.yml exec web python manage.py createsuperuser
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8090/api/v1/auth/me/   # 401 = up
+```
+Changing `.env.prod` needs `up -d` (not `restart`) so the containers pick up the new values. `NUXT_PUBLIC_*` are baked into the frontend image at build time (defaults: `https://` / `wss://nexus.praponb.com`).
+
+### Backup
+```bash
+docker compose -f docker-compose.prod.yml exec -T postgres pg_dump -U nexus -Fc nexus > nexus-$(date +%F).dump
+docker run --rm -v nexus_media:/m -v "$PWD":/b alpine tar czf /b/nexus-media-$(date +%F).tgz -C /m .
+```
